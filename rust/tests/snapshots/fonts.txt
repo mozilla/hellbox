@@ -1,0 +1,22 @@
+# Fonts: name, length and hash, and the indices of the missing glyphs (see tests/snapshots.rs).
+sans 5840 f815dc16
+sans-bold 5864 66886755
+sans-italic 6100 8b442649
+sans-options 6196 787b2889
+sans-stem 5812 a1c3e83e
+serif 5144 fdf46023
+mono 2392 ef351f32
+symbols 6468 73a051e2
+texts 3128 6ef2e2e5 missing 9,10
+scattered 858768 bc53068a
+extremes 1940 4024a920
+empty 1420 dec59210
+sans-metrics-only 752 691ff6db
+helvetica 5840 f815dc16
+helvetica-boldoblique 6176 d960079a
+times-bolditalic 5144 fdf46023
+courier-oblique 2484 bca45175
+times-bold-fallback 2760 d4786848
+symbol 3300 d1959f7c
+zapfdingbats 2456 d5b80124
+wingdings 3460 20b892e9

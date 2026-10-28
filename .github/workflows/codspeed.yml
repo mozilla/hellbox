@@ -1,0 +1,43 @@
+name: CodSpeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Lets CodSpeed run the benchmarks of past commits.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The authentication with CodSpeed (OIDC).
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # Built by cargo, as the actions of the organization are restricted (it's
+      # cached with ~/.cargo/bin by rust-cache).
+      - run: cargo install cargo-codspeed --locked
+      - run: cargo codspeed build -m simulation
+        working-directory: rust
+      # The benchmarks of benches/ (font generation and glyph data decoding),
+      # measured by simulating the CPU: the results don't depend on the runner.
+      - uses: CodSpeedHQ/action@v5
+        with:
+          mode: simulation
+          working-directory: rust
+          run: cargo codspeed run

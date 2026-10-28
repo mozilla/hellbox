@@ -1,0 +1,62 @@
+[package]
+name = "hellbox"
+version = "0.0.0"
+edition = "2021"
+description = "Generates TrueType fonts, from embedded compressed glyph data, to replace the fonts which aren't embedded in PDF files."
+repository = "https://github.com/mozilla/hellbox"
+# The code is under the MPL 2.0, the embedded glyph data under the SIL Open
+# Font License 1.1 of the source fonts (data/LICENSE_ARIMO, LICENSE_TINOS,
+# LICENSE_LIBERATION and LICENSE_NOTO), and the Unicode tables
+# (data/unicode.bin) under the Unicode License v3 (data/LICENSE_UNICODE).
+license = "MPL-2.0 AND OFL-1.1 AND Unicode-3.0"
+include = ["src/**/*", "data/**/*", "Cargo.toml", "README.md"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# No dependencies for the library, except wasm-bindgen for the wasm module.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+# The encoder reads the fonts with read-fonts, flate2 is for the deflate codec
+# and unicode-normalization for the tables of data/unicode.bin.
+[dependencies]
+flate2 = { version = "1", optional = true }
+read-fonts = { version = "0.46", default-features = false, features = ["std"], optional = true }
+# Pin the Unicode tables used to generate data/unicode.bin (Unicode 17).
+unicode-normalization = { version = "=0.1.25", optional = true }
+
+[features]
+# The encoder of the glyph data files, and its tools (src/bin/).
+encoder = ["dep:read-fonts", "dep:flate2", "dep:unicode-normalization"]
+
+[profile.release]
+lto = true
+opt-level = "s"
+codegen-units = 1
+# skrifa draws the glyphs of the reference tests, fontsan builds OTS (a C++
+# compiler is needed), divan runs the benchmarks (benches/), through the
+# compatibility layer of CodSpeed (it measures them in its runner).
+[dev-dependencies]
+divan = { version = "6.0.0", package = "codspeed-divan-compat" }
+fontsan = { version = "0.7", default-features = false, features = ["libz-rs", "wuff"] }
+skrifa = { version = "0.49", default-features = false, features = ["std"] }
+
+[package.metadata.wasm-pack.profile.release.wasm-bindgen]
+omit-default-module-path = true
+
+[[bin]]
+name = "build_glyph_data"
+required-features = ["encoder"]
+
+[[bin]]
+name = "build_all"
+required-features = ["encoder"]
+
+[[bench]]
+name = "glyph_data"
+harness = false
+
+[[bench]]
+name = "fonts"
+harness = false

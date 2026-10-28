@@ -1,0 +1,7 @@
+# Downloaded with tools/fetch_sources.sh.
+/sources/
+/build/
+/rust/target/
+# Private: the research notes and experiments, and the local settings.
+/research/
+/.claude/

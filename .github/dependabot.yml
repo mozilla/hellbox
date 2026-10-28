@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # The actions of the workflows, in a single weekly pull request. The Cargo
+  # dependencies are updated by hand: some pins are deliberate (e.g.
+  # unicode-normalization, whose Unicode version gives data/unicode.bin), and
+  # an update can change the generated files or the size of the wasm module.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

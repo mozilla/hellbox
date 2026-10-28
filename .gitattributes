@@ -1,0 +1,3 @@
+# LF everywhere: the tests compare text files (snapshots, reference drawings)
+# byte for byte, also on Windows.
+* text=auto eol=lf

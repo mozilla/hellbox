@@ -1,0 +1,82 @@
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - id: sources
+        uses: actions/cache@v6
+        with:
+          path: sources
+          key: sources-${{ hashFiles('tools/fetch_sources.sh') }}
+      - if: steps.sources.outputs.cache-hit != 'true'
+        run: sh tools/fetch_sources.sh
+        working-directory: .
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # Built by cargo, as the actions of the organization are restricted (it's
+      # cached with ~/.cargo/bin by rust-cache).
+      - run: cargo install cargo-llvm-cov --locked
+      # All the tests, those of the encoder with the fonts of sources/
+      # included, in release mode (the encoder is slow without optimizations).
+      - run: cargo llvm-cov --no-report --release --features encoder -- --include-ignored
+      - run: cargo llvm-cov report --release --lcov --output-path lcov.info
+      - name: Report the coverage
+        run: |
+          {
+            echo '```'
+            cargo llvm-cov report --release --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lcov
+          path: rust/lcov.info
+
+  upload:
+    name: Upload to Codecov
+    needs: coverage
+    # The token is a secret of the environment, which the pull requests from
+    # forks don't get.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: code-coverage
+    steps:
+      # Codecov maps the paths of the report to the files of the repository.
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: lcov
+          path: rust
+      - uses: codecov/codecov-action@v7
+        with:
+          files: rust/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true

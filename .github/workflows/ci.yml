@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  lint:
+    name: Format, clippy and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: cargo fmt --check
+      # The library shipped in pdf.js (no features), the encoder, and the wasm
+      # interface (src/wasm.rs only builds for wasm32).
+      - run: cargo clippy --release --all-targets -- -D warnings
+      - run: cargo clippy --release --all-targets --features encoder -- -D warnings
+      - run: cargo clippy --release --lib --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo doc --no-deps --features encoder
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The generated fonts must be the same on every platform (see the
+        # snapshots and the reference drawings).
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: cargo test --release
+      - run: cargo test --release --features encoder
+
+  data:
+    name: Data built from the sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: sources
+        uses: actions/cache@v6
+        with:
+          path: sources
+          key: sources-${{ hashFiles('tools/fetch_sources.sh') }}
+      - if: steps.sources.outputs.cache-hit != 'true'
+        run: sh tools/fetch_sources.sh
+        working-directory: .
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # The ignored tests need the fonts of sources/: the files of data/ must
+      # be the ones built from them.
+      - run: cargo test --release --features encoder -- --include-ignored
+
+  wasm:
+    name: Wasm module
+    runs-on: ubuntu-latest
+    env:
+      OUTPUT: ${{ github.workspace }}/build/wasm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # Built by cargo, as the actions of the organization are restricted (it's
+      # cached with ~/.cargo/bin by rust-cache).
+      - run: cargo install wasm-pack --locked
+      # What build.js runs in its container, the warnings being errors.
+      - run: ./compile.sh
+        env:
+          RUSTFLAGS: -D warnings
+      - name: Report the sizes
+        run: |
+          {
+            echo "| File | Bytes |"
+            echo "| --- | ---: |"
+            for file in hellbox.js hellbox_bg.wasm; do
+              echo "| \`$file\` | $(stat -c %s "$OUTPUT/$file") |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hellbox-wasm
+          path: build/wasm

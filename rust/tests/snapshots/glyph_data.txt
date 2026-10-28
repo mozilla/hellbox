@@ -1,0 +1,13 @@
+# Glyph data: name, length and hash of its dump (see tests/snapshots.rs).
+sans-regular 1614098 ade387db
+sans-bold 1604081 ad37a79d
+serif-regular 1905714 8894719b
+serif-bold 1909061 771b2165
+serif-italic 1959920 5cd3750e
+serif-bold-italic 1946956 880df046
+mono-regular 1202000 19721f31
+mono-bold 1204891 c26143d8
+symbols 1191143 e52541e1
+Symbol 89137 63426c29
+ZapfDingbats 209100 ba84a8df
+Wingdings 586145 3d6982c4
