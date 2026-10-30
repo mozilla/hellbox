@@ -70,20 +70,32 @@ impl FontSpec {
 }
 
 /// AFM widths and target boxes for named glyphs, in 1/1000 em.
+///
+/// Scale uniformly to the target height, limited by the larger of the box
+/// width and advance. Center on the box; width-limited glyphs keep their
+/// bottom alignment when both source and target bottoms are near the baseline.
+/// Joining pieces use separate horizontal and vertical fits (see `Pieces`).
 #[derive(Clone, Debug)]
 pub struct Metrics {
     pub path: PathBuf,
     /// The codepoints and their glyph names in the file.
     pub names: Vec<(u32, String)>,
-    /// The glyphs moved exactly onto their box (scaled separately on each
-    /// axis): the pieces which must join (e.g. those of the big delimiters).
-    /// The other ones keep their proportions: scaled to the height of their
-    /// box, unless they would then be wider than it and than their width,
-    /// fitting in these instead and centered vertically (those on the baseline
-    /// staying on it). They're centered horizontally on their box.
-    pub exact: Vec<String>,
+    pub pieces: Vec<Pieces>,
     /// (Output codepoint, source codepoint) overrides, applied before fitting.
     pub glyphs_of: Vec<(u32, u32)>,
+}
+
+/// A delimiter extension and the pieces joining it. Fit each piece vertically
+/// to its AFM box and horizontally by its stem, measured inside the joining
+/// edge, to the extension's box. Fit the extension itself on both axes.
+/// Empty piece lists fit a standalone glyph on both axes (e.g. the radical).
+#[derive(Clone, Debug)]
+pub struct Pieces {
+    pub extension: String,
+    /// The pieces joining it at their bottom (the top and middle pieces).
+    pub tops: Vec<String>,
+    /// The pieces joining it at their top (the bottom pieces).
+    pub bottoms: Vec<String>,
 }
 
 /// The options of a build (see also the `build_glyph_data` tool).
@@ -471,40 +483,63 @@ fn bounding_box(contours: &[Vec<Point>]) -> Option<[f64; 4]> {
     (x.0 <= x.1).then_some([x.0, y.0, x.1, y.1])
 }
 
-/// Moves contours onto a box, for a glyph of a given width (see `Metrics`):
-/// exactly, or keeping their proportions. `baseline` is the distance from the
-/// baseline up to which a glyph is on it. The coordinates are rounded.
+/// How a glyph is moved onto its box (see `Metrics`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Placement {
+    /// Uniform fit; `baseline` is the tolerance for aligning glyph bottoms.
+    Fit { width: f64, baseline: f64 },
+    /// Exactly onto its box vertically, and with x' = a * x + b horizontally
+    /// (see `Pieces`).
+    Join { a: f64, b: f64 },
+}
+
+/// Maps the source horizontal interval to the target interval.
+fn join(from: (f64, f64), to: (f64, f64)) -> Placement {
+    let a = if from.1 > from.0 {
+        (to.1 - to.0) / (from.1 - from.0)
+    } else {
+        1.0
+    };
+    Placement::Join {
+        a,
+        b: to.0 - a * from.0,
+    }
+}
+
+/// Moves contours onto a box. The coordinates are rounded.
 fn place_in_box(
     contours: &[Vec<Point>],
     target: [f64; 4],
-    width: f64,
-    exact: bool,
-    baseline: f64,
+    placement: Placement,
 ) -> Vec<Vec<Point>> {
     let Some(bbox) = bounding_box(contours) else {
         return Vec::new();
     };
     let scale = |to: f64, from: f64| if from > 0.0 { to / from } else { 1.0 };
     let (target_width, target_height) = (target[2] - target[0], target[3] - target[1]);
-    let mut sx = scale(target_width, bbox[2] - bbox[0]);
-    let mut sy = scale(target_height, bbox[3] - bbox[1]);
+    let sy = scale(target_height, bbox[3] - bbox[1]);
     let center = |b: [f64; 4]| ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
-    let ((cx, mut cy), (tx, mut ty)) = (center(bbox), center(target));
-    if !exact {
-        let s = sy.min(scale(target_width.max(width), bbox[2] - bbox[0]));
-        if s < sy && bbox[1].abs() <= baseline && target[1].abs() <= baseline {
-            (cy, ty) = (bbox[1], target[1]);
+    let ((cx, cy), (tx, ty)) = (center(bbox), center(target));
+    // x' = x_to + (x - x_from) * sx, y' = y_to + (y - y_from) * sy.
+    let (sx, x_from, x_to, sy, y_from, y_to) = match placement {
+        Placement::Fit { width, baseline } => {
+            let s = sy.min(scale(target_width.max(width), bbox[2] - bbox[0]));
+            if s < sy && bbox[1].abs() <= baseline && target[1].abs() <= baseline {
+                (s, cx, tx, s, bbox[1], target[1])
+            } else {
+                (s, cx, tx, s, cy, ty)
+            }
         }
-        (sx, sy) = (s, s);
-    }
+        Placement::Join { a, b } => (a, 0.0, b, sy, cy, ty),
+    };
     contours
         .iter()
         .map(|contour| {
             contour
                 .iter()
                 .map(|p| Point {
-                    x: f64::round(tx + (p.x - cx) * sx),
-                    y: f64::round(ty + (p.y - cy) * sy),
+                    x: f64::round(x_to + (p.x - x_from) * sx),
+                    y: f64::round(y_to + (p.y - y_from) * sy),
                     on: p.on,
                 })
                 .collect()
@@ -565,7 +600,8 @@ fn synthesize(
         units_per_em,
         ..SourceFont::default()
     };
-    let sources = cmap.clone();
+    // Name -> (source key, outline, AFM box, advance), in primary-font units.
+    let mut glyphs = HashMap::new();
     for (cp, name) in &metrics.names {
         let &(width, bbox) = afm
             .get(name)
@@ -575,7 +611,7 @@ fn synthesize(
             .iter()
             .find(|&&(c, _)| c == *cp)
             .map_or(*cp, |&(_, from)| from);
-        let Some(&key) = sources.get(&from) else {
+        let Some(&key) = cmap.get(&from) else {
             continue;
         };
         let source = &fonts[key.font].source;
@@ -584,15 +620,57 @@ fn synthesize(
         for p in contours.iter_mut().flatten() {
             (p.x, p.y) = (p.x * scale, p.y * scale);
         }
-        let exact = metrics.exact.contains(name);
-        // Treat source and target bottoms within 40/1000 em as baseline-aligned.
-        let contours = place_in_box(
-            &contours,
-            bbox.map(|v| v * em),
-            width * em,
-            exact,
-            40.0 * em,
+        glyphs.insert(
+            name.as_str(),
+            (key, contours, bbox.map(|v| v * em), width * em),
         );
+    }
+    // The pieces: their stems onto the box of their extension.
+    let mut placements = HashMap::new();
+    for pieces in &metrics.pieces {
+        let Some((_, contours, target, _)) = glyphs.get(pieces.extension.as_str()) else {
+            continue;
+        };
+        let stem = (target[0], target[2]);
+        if let Some(bbox) = bounding_box(contours) {
+            placements.insert(pieces.extension.as_str(), join((bbox[0], bbox[2]), stem));
+        }
+        // Just inside the joining edges: 15/1000 em.
+        let inside = 15.0 * em;
+        for (names, at_bottom) in [(&pieces.tops, true), (&pieces.bottoms, false)] {
+            for name in names {
+                let Some((_, contours, _, _)) = glyphs.get(name.as_str()) else {
+                    continue;
+                };
+                let Some(bbox) = bounding_box(contours) else {
+                    continue;
+                };
+                let y = if at_bottom {
+                    bbox[1] + inside
+                } else {
+                    bbox[3] - inside
+                };
+                let xs = intersections(contours, true, y);
+                let (Some(&x0), Some(&x1)) = (xs.first(), xs.last()) else {
+                    return Err(format!("{name}: no stem at y = {y}."));
+                };
+                placements.insert(name.as_str(), join((x0, x1), stem));
+            }
+        }
+    }
+    for (cp, name) in &metrics.names {
+        let Some((key, contours, target, width)) = glyphs.get(name.as_str()) else {
+            continue;
+        };
+        // Treat source and target bottoms within 40/1000 em as baseline-aligned.
+        let placement = placements
+            .get(name.as_str())
+            .copied()
+            .unwrap_or(Placement::Fit {
+                width: *width,
+                baseline: 40.0 * em,
+            });
+        let contours = place_in_box(contours, *target, placement);
         cmap.insert(
             *cp,
             Key {
@@ -605,7 +683,7 @@ fn synthesize(
         } else {
             SourceGlyph::Simple(contours)
         });
-        font.advances.push(f64::round(width * em) as u16);
+        font.advances.push(f64::round(*width) as u16);
         origins.push(key.font);
     }
     Ok(font)
@@ -1152,30 +1230,36 @@ mod tests {
             point(x, y, true),
             point(0.0, y, true),
         ]];
-        let place = |target, width, exact| {
-            bounding_box(&place_in_box(&rectangle, target, width, exact, 40.0))
+        let place = |target, placement| bounding_box(&place_in_box(&rectangle, target, placement));
+        let fit = |width| Placement::Fit {
+            width,
+            baseline: 40.0,
         };
-        // Exactly.
+        // Exactly onto the box, or with some horizontal transform.
         let target = [10.0, -20.0, 30.0, 220.0];
-        assert_eq!(place(target, 100.0, true), Some(target));
+        assert_eq!(place(target, join((0.0, x), (10.0, 30.0))), Some(target));
+        assert_eq!(
+            place(target, join((50.0, 100.0), (10.0, 30.0))),
+            Some([-10.0, -20.0, 30.0, 220.0])
+        );
         // The height of the box, centered horizontally.
         assert_eq!(
-            place([0.0, -50.0, 300.0, 70.0], 300.0, false),
+            place([0.0, -50.0, 300.0, 70.0], fit(300.0)),
             Some([50.0, -50.0, 250.0, 70.0])
         );
         // Too wide: fitting in the box (wider than the width), here on the
         // baseline, or in the width (wider than the box), centered vertically.
         assert_eq!(
-            place([0.0, 0.0, 150.0, 120.0], 100.0, false),
+            place([0.0, 0.0, 150.0, 120.0], fit(100.0)),
             Some([0.0, 0.0, 150.0, 90.0])
         );
         assert_eq!(
-            place([0.0, 100.0, 40.0, 300.0], 50.0, false),
+            place([0.0, 100.0, 40.0, 300.0], fit(50.0)),
             Some([-5.0, 185.0, 45.0, 215.0])
         );
         // Slightly below the baseline (an overshoot), staying there.
         assert_eq!(
-            place([0.0, -10.0, 50.0, 300.0], 40.0, false),
+            place([0.0, -10.0, 50.0, 300.0], fit(40.0)),
             Some([0.0, -10.0, 50.0, 20.0])
         );
     }
