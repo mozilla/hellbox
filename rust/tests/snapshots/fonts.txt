@@ -17,6 +17,6 @@ helvetica-boldoblique 6176 d960079a
 times-bolditalic 5144 fdf46023
 courier-oblique 2484 bca45175
 times-bold-fallback 2760 d4786848
-symbol 3300 1fffb3a1
+symbol 3296 c3de9b64
 zapfdingbats 2452 73ad7c61
 wingdings 3460 20b892e9

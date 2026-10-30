@@ -17,7 +17,9 @@ mod unicode;
 use crate::{model, payload, Error};
 use std::path::Path;
 
-pub use build::{build_glyph_data, BuildOptions, BuildStats, Codec, FontSpec, Metrics, Stems};
+pub use build::{
+    build_glyph_data, BuildOptions, BuildStats, Codec, FontSpec, Metrics, Pieces, Stems,
+};
 pub use search::EncoderOptions;
 pub use unicode::{unicode_tables, UnicodeTables};
 
@@ -82,34 +84,28 @@ const DINGBATS_GLYPHS: &str =
     a179:27A9 a193:27AA a180:27AB a199:27AC a181:27AD a200:27AE a182:27AF a201:27B1 a183:27B2 \
     a184:27B3 a197:27B4 a185:27B5 a194:27B6 a198:27B7 a186:27B8 a195:27B9 a187:27BA a188:27BB \
     a189:27BC a190:27BD a191:27BE";
-// Glyphs fitted independently on each axis.
-const SYMBOL_PIECES: [&str; 26] = [
-    "parenlefttp",
-    "parenleftex",
-    "parenleftbt",
-    "parenrighttp",
-    "parenrightex",
-    "parenrightbt",
-    "bracketlefttp",
-    "bracketleftex",
-    "bracketleftbt",
-    "bracketrighttp",
-    "bracketrightex",
-    "bracketrightbt",
-    "bracelefttp",
-    "braceleftmid",
-    "braceleftbt",
-    "bracerighttp",
-    "bracerightmid",
-    "bracerightbt",
-    "braceex",
-    "integraltp",
-    "integralex",
-    "integralbt",
-    "arrowvertex",
-    "arrowhorizex",
-    "radical",
-    "radicalex",
+// Joining delimiter and integral pieces, plus glyphs fitted on both axes.
+#[allow(clippy::type_complexity)]
+const SYMBOL_PIECES: [(&str, &[&str], &[&str]); 10] = [
+    ("parenleftex", &["parenlefttp"], &["parenleftbt"]),
+    ("parenrightex", &["parenrighttp"], &["parenrightbt"]),
+    ("bracketleftex", &["bracketlefttp"], &["bracketleftbt"]),
+    ("bracketrightex", &["bracketrighttp"], &["bracketrightbt"]),
+    (
+        "braceex",
+        &[
+            "bracelefttp",
+            "braceleftmid",
+            "bracerighttp",
+            "bracerightmid",
+        ],
+        &["braceleftbt", "bracerightbt"],
+    ),
+    ("integralex", &["integraltp"], &["integralbt"]),
+    ("arrowvertex", &[], &[]),
+    ("arrowhorizex", &[], &[]),
+    ("radical", &[], &[]),
+    ("radicalex", &[], &[]),
 ];
 // Swap the source glyphs for phi (U+03C6) and phi1 (U+03D5).
 const SYMBOL_GLYPHS_OF: [(u32, u32); 2] = [(0x3c6, 0x3d5), (0x3d5, 0x3c6)];
@@ -239,10 +235,21 @@ pub fn data_builds(sources: &Path, grid: u8) -> Vec<(String, BuildOptions)> {
 
     // The glyphs of Symbol, ZapfDingbats and Wingdings, from the first font
     // having them. Symbol and ZapfDingbats also use AFM widths and fitting.
-    let metrics = |file: &str, glyphs: &str, exact: &[&str], glyphs_of: &[(u32, u32)]| Metrics {
+    let names = |names: &[&str]| names.iter().map(|name| name.to_string()).collect();
+    let metrics = |file: &str,
+                   glyphs: &str,
+                   pieces: &[(&str, &[&str], &[&str])],
+                   glyphs_of: &[(u32, u32)]| Metrics {
         path: sources.join(file),
         names: glyph_names(glyphs),
-        exact: exact.iter().map(|name| name.to_string()).collect(),
+        pieces: pieces
+            .iter()
+            .map(|&(extension, tops, bottoms)| Pieces {
+                extension: extension.to_string(),
+                tops: names(tops),
+                bottoms: names(bottoms),
+            })
+            .collect(),
         glyphs_of: glyphs_of.to_vec(),
     };
     for (file, family, fonts, metrics) in [
@@ -359,8 +366,10 @@ mod tests {
             assert_eq!((glyphs.len(), codepoints.len()), (count, count));
         }
         let symbol = glyph_names(SYMBOL_GLYPHS);
-        for piece in SYMBOL_PIECES {
-            assert!(symbol.iter().any(|(_, name)| name == piece), "{piece}");
+        for (extension, tops, bottoms) in SYMBOL_PIECES {
+            for piece in [extension].iter().chain(tops).chain(bottoms) {
+                assert!(symbol.iter().any(|(_, name)| name == piece), "{piece}");
+            }
         }
         for (cp, from) in SYMBOL_GLYPHS_OF {
             assert!(symbol.iter().any(|&(c, _)| c == cp) && symbol.iter().any(|&(c, _)| c == from));

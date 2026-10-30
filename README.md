@@ -54,9 +54,10 @@ are the same, and all the ones of Courier. The symbols come from some unhinted
 [Noto](https://notofonts.github.io/) fonts. The glyphs of Symbol and
 ZapfDingbats are moved onto the bounding boxes of the AFM files of these fonts
 (the Core 14 AFM files of Adobe), with their widths, where the PDF files using
-them expect them: exactly for the pieces which must join (those of the big
-delimiters, integrals and arrows, the radical and its extension), the other
-glyphs keeping their proportions.
+them expect them: the pieces of the big delimiters and integrals exactly
+vertically, their stems on the ones of their extensions horizontally (to join
+them), the extensions of the arrows, the radical and its extension exactly,
+the other glyphs keeping their proportions.
 
 | File                    | Size    | Codepoints | Content                                                  |
 | ----------------------- | ------- | ---------- | -------------------------------------------------------- |
