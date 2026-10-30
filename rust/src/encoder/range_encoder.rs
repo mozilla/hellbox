@@ -74,6 +74,16 @@ impl Coder for RangeEncoder {
         }
         bit
     }
+
+    fn direct(&mut self, count: u32, value: u32) -> u32 {
+        self.range >>= count;
+        self.low += value as u64 * self.range as u64;
+        while self.range < TOP {
+            self.range <<= 8;
+            self.shift_low();
+        }
+        value
+    }
 }
 
 /// -log2(p / 4096): the cost in bits of a decision of probability p / 4096.
@@ -105,5 +115,11 @@ impl Coder for CostCoder {
         let p = models.probability(index) as usize;
         self.total += self.costs[if bit != 0 { p } else { 4096 - p }];
         bit
+    }
+
+    #[inline]
+    fn direct(&mut self, count: u32, value: u32) -> u32 {
+        self.total += count as f64;
+        value
     }
 }

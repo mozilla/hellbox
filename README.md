@@ -55,21 +55,21 @@ are the same, and all the ones of Courier. The symbols come from some unhinted
 
 | File                    | Size    | Codepoints | Content                                                  |
 | ----------------------- | ------- | ---------- | -------------------------------------------------------- |
-| `Sans-Regular.hbgd`     | 76.9 KB | 3010       | Arimo: Latin, Greek, Cyrillic, Hebrew, IPA, punctuation, currencies... (also Helvetica and Helvetica-Oblique) |
-| `Sans-Bold.hbgd`        | 77.2 KB | 3010       | Arimo Bold (also Helvetica-Bold and Helvetica-BoldOblique) |
-| `Serif-Regular.hbgd`    | 76.9 KB | 3011       | Tinos, the same coverage (also Times-Roman)               |
-| `Serif-Bold.hbgd`       | 77.5 KB | 3011       | Tinos Bold (also Times-Bold)                              |
-| `Serif-Italic.hbgd`     | 87.3 KB | 3011       | Tinos Italic (also Times-Italic)                          |
-| `Serif-BoldItalic.hbgd` | 87.4 KB | 3011       | Tinos Bold Italic (also Times-BoldItalic)                 |
-| `Mono-Regular.hbgd`     | 49.5 KB | 2305       | Liberation Mono (also Courier and Courier-Oblique)        |
-| `Mono-Bold.hbgd`        | 49.8 KB | 2305       | Liberation Mono Bold (also Courier-Bold and Courier-BoldOblique) |
-| `NotoSymbols.hbgd`      | 71.0 KB | 1757       | Arrows, math operators, technical symbols, geometric shapes, dingbats... (from Noto Sans Math, Symbols, Symbols 2 and Mono), only what's missing in the 3 families |
-| `Symbol.hbgd`           | 8.5 KB  | 186        | The glyphs of Symbol, as pdf.js maps them to Unicode: from Tinos (Greek, ...), Noto Sans Math and Noto Sans Symbols |
-| `ZapfDingbats.hbgd`     | 17.0 KB | 202        | The glyphs of ZapfDingbats, from Noto Sans Symbols 2 and Noto Sans Symbols |
-| `Wingdings.hbgd`        | 35.6 KB | 646        | The glyphs of Wingdings, Wingdings 2 and Wingdings 3 at their Unicode codepoints (pdf.js maps their codes), from Noto Sans Symbols 2, Noto Sans Symbols, Noto Sans Math and Tinos |
+| `Sans-Regular.hbgd`     | 76.4 KB | 3010       | Arimo: Latin, Greek, Cyrillic, Hebrew, IPA, punctuation, currencies... (also Helvetica and Helvetica-Oblique) |
+| `Sans-Bold.hbgd`        | 76.6 KB | 3010       | Arimo Bold (also Helvetica-Bold and Helvetica-BoldOblique) |
+| `Serif-Regular.hbgd`    | 76.6 KB | 3011       | Tinos, the same coverage (also Times-Roman)               |
+| `Serif-Bold.hbgd`       | 76.9 KB | 3011       | Tinos Bold (also Times-Bold)                              |
+| `Serif-Italic.hbgd`     | 87.0 KB | 3011       | Tinos Italic (also Times-Italic)                          |
+| `Serif-BoldItalic.hbgd` | 86.9 KB | 3011       | Tinos Bold Italic (also Times-BoldItalic)                 |
+| `Mono-Regular.hbgd`     | 49.0 KB | 2305       | Liberation Mono (also Courier and Courier-Oblique)        |
+| `Mono-Bold.hbgd`        | 49.3 KB | 2305       | Liberation Mono Bold (also Courier-Bold and Courier-BoldOblique) |
+| `NotoSymbols.hbgd`      | 70.6 KB | 1757       | Arrows, math operators, technical symbols, geometric shapes, dingbats... (from Noto Sans Math, Symbols, Symbols 2 and Mono), only what's missing in the 3 families |
+| `Symbol.hbgd`           | 8.3 KB  | 186        | The glyphs of Symbol, as pdf.js maps them to Unicode: from Tinos (Greek, ...), Noto Sans Math and Noto Sans Symbols |
+| `ZapfDingbats.hbgd`     | 16.6 KB | 202        | The glyphs of ZapfDingbats, from Noto Sans Symbols 2 and Noto Sans Symbols |
+| `Wingdings.hbgd`        | 35.1 KB | 646        | The glyphs of Wingdings, Wingdings 2 and Wingdings 3 at their Unicode codepoints (pdf.js maps their codes), from Noto Sans Symbols 2, Noto Sans Symbols, Noto Sans Math and Tinos |
 
 They're compressed with a dedicated codec (see [Compression](#compression)):
-715 KB in total. `NotoSymbols.hbgd` is used as a fallback for all the fonts.
+709 KB in total. `NotoSymbols.hbgd` is used as a fallback for all the fonts.
 
 The data is lossless (the decoded outlines are checked against the source
 fonts when the files are built).
@@ -158,12 +158,12 @@ references), the decoder just follows its decisions
 
 | Files of `data/`              | Payload | deflate | brotli 11 | xz -9e | model  |
 | ----------------------------- | ------- | ------- | --------- | ------ | ------ |
-| Sans (2 styles)               | 303 kB  | 192 kB  | 178 kB    | 178 kB | 154 kB |
-| Serif (4 styles)              | 709 kB  | 410 kB  | 374 kB    | 373 kB | 329 kB |
-| Mono (2 styles)               | 199 kB  | 119 kB  | 113 kB    | 112 kB | 99 kB  |
+| Sans (2 styles)               | 303 kB  | 192 kB  | 178 kB    | 178 kB | 153 kB |
+| Serif (4 styles)              | 709 kB  | 410 kB  | 374 kB    | 373 kB | 327 kB |
+| Mono (2 styles)               | 199 kB  | 119 kB  | 113 kB    | 112 kB | 98 kB  |
 | Symbols, Symbol, ZapfDingbats | 203 kB  | 125 kB  | 119 kB    | 118 kB | 96 kB  |
-| Wingdings                     | 80 kB   | 48 kB   | 45 kB     | 45 kB  | 36 kB  |
-| All                           | 1.49 MB | 894 kB  | 828 kB    | 826 kB | 715 kB |
+| Wingdings                     | 80 kB   | 48 kB   | 45 kB     | 45 kB  | 35 kB  |
+| All                           | 1.49 MB | 894 kB  | 828 kB    | 826 kB | 709 kB |
 
 (kB = 1000 bytes.) The same glyphs as fonts (the same codepoints from the same
 source fonts, subset with fontTools: unhinted, without glyph names and layout
@@ -172,12 +172,12 @@ post tables):
 
 | Files of `data/`              | TrueType | WOFF    | WOFF2  | model  |
 | ----------------------------- | -------- | ------- | ------ | ------ |
-| Sans (2 styles)               | 463 kB   | 280 kB  | 198 kB | 154 kB |
-| Serif (4 styles)              | 1.03 MB  | 602 kB  | 414 kB | 329 kB |
-| Mono (2 styles)               | 313 kB   | 179 kB  | 126 kB | 99 kB  |
+| Sans (2 styles)               | 463 kB   | 280 kB  | 198 kB | 153 kB |
+| Serif (4 styles)              | 1.03 MB  | 602 kB  | 414 kB | 327 kB |
+| Mono (2 styles)               | 313 kB   | 179 kB  | 126 kB | 98 kB  |
 | Symbols, Symbol, ZapfDingbats | 281 kB   | 155 kB  | 126 kB | 96 kB  |
-| Wingdings                     | 113 kB   | 59 kB   | 50 kB  | 36 kB  |
-| All                           | 2.20 MB  | 1.27 MB | 914 kB | 715 kB |
+| Wingdings                     | 113 kB   | 59 kB   | 50 kB  | 35 kB  |
+| All                           | 2.20 MB  | 1.27 MB | 914 kB | 709 kB |
 
 WOFF is compressed with zopfli (100 iterations, 3% smaller than zlib level
 9), WOFF2 with brotli 11 and its glyf, loca and hmtx transforms: the files of

@@ -22,7 +22,7 @@
 //! The encoder chooses the mode and the reference (see `encoder/search.rs`),
 //! the decoder just follows.
 
-use crate::range_decoder::{BitModels, RangeDecoder};
+use crate::range_decoder::{BitModels, RangeDecoder, MAX_DIRECT_BITS};
 use crate::Error;
 #[cfg(target_arch = "wasm32")]
 use std::cell::Cell;
@@ -154,6 +154,11 @@ pub(crate) trait Coder {
     /// bit when encoding, the decoded one when decoding.
     fn bit(&mut self, models: &mut BitModels, index: usize, bit: u32) -> u32;
 
+    /// Codes `count` (at most `MAX_DIRECT_BITS`) equiprobable bits, without
+    /// model: returns the given value when encoding, the decoded one when
+    /// decoding.
+    fn direct(&mut self, count: u32, value: u32) -> u32;
+
     /// Whether the data is truncated (when decoding).
     fn failed(&self) -> bool {
         false
@@ -166,6 +171,11 @@ impl Coder for RangeDecoder<'_> {
     #[inline]
     fn bit(&mut self, models: &mut BitModels, index: usize, _bit: u32) -> u32 {
         self.decode_bit(models, index)
+    }
+
+    #[inline]
+    fn direct(&mut self, count: u32, _value: u32) -> u32 {
+        self.decode_direct(count)
     }
 
     fn failed(&self) -> bool {
@@ -248,6 +258,9 @@ struct UIntModels {
     /// The length is coded with a binary tree (see `TREE_LENGTHS`) rather
     /// than in unary, followed by a unary extension for longer lengths.
     length_tree: bool,
+    /// The number of mantissa bits coded with the models, the next ones being
+    /// direct (equiprobable) bits.
+    modeled_bits: usize,
 }
 
 /// The lengths coded by the tree of a `UIntModels` (a power of two), the
@@ -260,6 +273,7 @@ impl UIntModels {
             unary: BitModels::new(num_contexts * MAX_BITS),
             mantissa: BitModels::new(num_contexts * (MAX_LENGTH_CONTEXT + 1) * MANTISSA_CONTEXTS),
             length_tree: false,
+            modeled_bits: MAX_BITS,
         }
     }
 
@@ -267,6 +281,16 @@ impl UIntModels {
         UIntModels {
             length_tree: true,
             ..Self::new(num_contexts)
+        }
+    }
+
+    /// New-contour delta magnitudes: tree-coded length, one modeled mantissa
+    /// bit, then direct bits. The other bits are close to random, where
+    /// adaptive models cost more than one bit each.
+    fn for_magnitudes(num_contexts: usize) -> Self {
+        UIntModels {
+            modeled_bits: 1,
+            ..Self::with_length_tree(num_contexts)
         }
     }
 
@@ -300,7 +324,8 @@ impl UIntModels {
         let mantissa_base =
             (ctx * (MAX_LENGTH_CONTEXT + 1) + length.min(MAX_LENGTH_CONTEXT)) * MANTISSA_CONTEXTS;
         let mut result: u64 = 1;
-        for j in 0..length - 1 {
+        let modeled = (length - 1).min(self.modeled_bits);
+        for j in 0..modeled {
             // Position of the bit, from the end.
             let k = length - 2 - j;
             let index = if j < TREE_BITS {
@@ -309,6 +334,13 @@ impl UIntModels {
                 mantissa_base + (1 << TREE_BITS) + k.min(MAX_POSITION_CONTEXT - 1)
             };
             result = result * 2 + c.bit(&mut self.mantissa, index, ((v >> k) & 1) as u32) as u64;
+        }
+        let mut remaining = length - 1 - modeled;
+        while remaining > 0 {
+            let count = remaining.min(MAX_DIRECT_BITS as usize);
+            remaining -= count;
+            let given = ((v >> remaining) & ((1 << count) - 1)) as u32;
+            result = (result << count) | c.direct(count as u32, given) as u64;
         }
         result - 1
     }
@@ -996,8 +1028,8 @@ impl Model {
             zero_y: BitModels::new(n(24 * 4)),
             sign_x: BitModels::new(n(24 * 3 * 3)),
             sign_y: BitModels::new(n(24 * 3 * 3)),
-            mag_x: UIntModels::with_length_tree(n(24 * 6)),
-            mag_y: UIntModels::with_length_tree(n(24 * 6)),
+            mag_x: UIntModels::for_magnitudes(n(24 * 6)),
+            mag_y: UIntModels::for_magnitudes(n(24 * 6)),
             component_gid: SIntModels::new(n(2)),
             transform: BitModels::new(n(4)),
             offset: SIntModels::new(n(4)),

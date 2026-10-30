@@ -7,6 +7,7 @@
 //!
 //! The probability of a bit being 1 is the average of two estimates adapting
 //! at different speeds, stored as 16 bits values; the coder uses 12 bits.
+//! The direct bits are equiprobable, without model.
 
 pub(crate) const TOP: u32 = 1 << 24;
 const HALF: u16 = 32768;
@@ -124,4 +125,23 @@ impl<'a> RangeDecoder<'a> {
         }
         bit
     }
+
+    /// Decodes `count` (at most `MAX_DIRECT_BITS`) equiprobable bits, without
+    /// model: the range is divided into 2^count equal parts.
+    #[inline]
+    pub fn decode_direct(&mut self, count: u32) -> u32 {
+        self.range >>= count;
+        let value = self.code / self.range;
+        self.code -= value * self.range;
+        while self.range < TOP {
+            self.range <<= 8;
+            self.code = (self.code << 8) | self.next();
+        }
+        // Only invalid data can give more bits.
+        value & ((1 << count) - 1)
+    }
 }
+
+/// The maximum number of bits of a direct decision: the range keeps at least
+/// 8 bits.
+pub(crate) const MAX_DIRECT_BITS: u32 = 16;
