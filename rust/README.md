@@ -194,7 +194,8 @@ UPDATE_SNAPSHOTS=1 cargo test --release --test snapshots
 char codes and widths, the centering, the styles of the families and the
 weights synthesized from them (linear stems), the slant, the ligatures and
 sequences, the fallback to the symbols (with the style of the font), the
-glyphs of the standard fonts...
+glyphs of the standard fonts (those of Symbol and ZapfDingbats on the boxes of
+their AFM files, the pieces of the big delimiters joining)...
 
 `tests/encoder.rs` (with the `encoder` feature) checks that encoding the
 embedded files again gives the same bytes, that the model codec gives back the

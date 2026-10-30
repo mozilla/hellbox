@@ -883,3 +883,282 @@ fn finds_the_missing_glyphs_of_the_standard_fonts() {
     let wingdings: [&[u32]; 5] = [&[0x25aa], &[0x2611], &[0x1f582], &[0x2b9a], &[0x2612]];
     assert!(missing_standard_glyphs(StandardFont::Wingdings, &wingdings).is_empty());
 }
+
+/// Approximate curve bounds [x_min, y_min, x_max, y_max], sampling each
+/// quadratic segment at 65 evenly spaced parameter values.
+fn outline_bounds(contours: &Contours) -> [f64; 4] {
+    let mut b = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    let mut add = |x: f64, y: f64| b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+    for contour in contours {
+        let n = contour.len();
+        for (i, &p) in contour.iter().enumerate() {
+            if p.on {
+                add(p.x, p.y);
+                continue;
+            }
+            // The curve of an off-curve point (flattened), between the
+            // on-curve points around it (implied between two off-curve ones).
+            let end = |q: Point| {
+                if q.on {
+                    (q.x, q.y)
+                } else {
+                    ((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+                }
+            };
+            let (a, c) = (end(contour[(i + n - 1) % n]), end(contour[(i + 1) % n]));
+            for step in 0..=64 {
+                let t = step as f64 / 64.0;
+                let u = 1.0 - t;
+                add(
+                    u * u * a.0 + 2.0 * u * t * p.x + t * t * c.0,
+                    u * u * a.1 + 2.0 * u * t * p.y + t * t * c.1,
+                );
+            }
+        }
+    }
+    b
+}
+
+/// Generates a standard font with the supplied widths in 1/1000 em.
+/// Also returns the font units per 1/1000 em.
+fn font_with_widths(font: StandardFont, glyphs: &[(char, f64)]) -> (Font, f64) {
+    let requests: Vec<Request> = glyphs
+        .iter()
+        .map(|&(c, width)| request(&c.to_string(), Some(width), None))
+        .collect();
+    let generated = generate_standard_font(font, &requests, &Options::default());
+    assert!(generated.missing.is_empty());
+    let units = standard_glyph_data(font).units_per_em as f64 / 1000.0;
+    (read(&generated.data), units)
+}
+
+/// How a glyph of Symbol or ZapfDingbats is on its box in the AFM file.
+#[derive(Clone, Copy, Debug)]
+enum OnBox {
+    /// All of it.
+    Exactly,
+    /// Its bottom and top (scaled to its height, keeping its proportions).
+    Height,
+    /// Its vertical center (fitting in its width).
+    Centered,
+}
+
+#[test]
+fn puts_the_glyphs_of_symbol_and_zapfdingbats_on_the_boxes_of_adobe() {
+    use OnBox::*;
+    // Glyph, width and box in the AFM files of Adobe.
+    for (font, c, width, afm_box, on_box) in [
+        // Tinos's summation and product are about 100/1000 em below these boxes.
+        (
+            StandardFont::Symbol,
+            '∑',
+            713.0,
+            [14.0, -108.0, 695.0, 752.0],
+            Height,
+        ),
+        (
+            StandardFont::Symbol,
+            '∏',
+            823.0,
+            [25.0, -101.0, 803.0, 751.0],
+            Height,
+        ),
+        (
+            StandardFont::Symbol,
+            '+',
+            549.0,
+            [10.0, 0.0, 539.0, 533.0],
+            Height,
+        ),
+        // The radical, and its extension past its advance, at its top.
+        (
+            StandardFont::Symbol,
+            '√',
+            549.0,
+            [10.0, -38.0, 515.0, 917.0],
+            Exactly,
+        ),
+        (
+            StandardFont::Symbol,
+            '\u{203e}',
+            500.0,
+            [480.0, 881.0, 1090.0, 917.0],
+            Exactly,
+        ),
+        // Check the AFM heights after swapping the source glyphs for phi and phi1.
+        (
+            StandardFont::Symbol,
+            '\u{3c6}',
+            521.0,
+            [28.0, -224.0, 492.0, 673.0],
+            Height,
+        ),
+        (
+            StandardFont::Symbol,
+            '\u{3d5}',
+            603.0,
+            [36.0, -224.0, 587.0, 499.0],
+            Height,
+        ),
+        // Height fit preserves the baseline.
+        (
+            StandardFont::Symbol,
+            '1',
+            500.0,
+            [117.0, 0.0, 390.0, 673.0],
+            Height,
+        ),
+        // Width-limited arrows remain vertically centered.
+        (
+            StandardFont::Symbol,
+            '←',
+            987.0,
+            [32.0, -15.0, 942.0, 511.0],
+            Centered,
+        ),
+        (
+            StandardFont::ZapfDingbats,
+            '✁',
+            974.0,
+            [35.0, 72.0, 939.0, 621.0],
+            Height,
+        ),
+        (
+            StandardFont::ZapfDingbats,
+            '→',
+            838.0,
+            [35.0, 152.0, 803.0, 540.0],
+            Centered,
+        ),
+    ] {
+        let (generated, units) = font_with_widths(font, &[(c, width)]);
+        let [x_min, y_min, x_max, y_max] = outline_bounds(&generated.glyphs[1]);
+        let expected = afm_box.map(|v| v * units);
+        let near = |a: f64, b: f64| (a - b).abs() <= 2.0;
+        let message = format!("{c} {:?}", [x_min, y_min, x_max, y_max].map(|v| v / units));
+        let matches_box = match on_box {
+            Exactly => {
+                near(x_min, expected[0])
+                    && near(y_min, expected[1])
+                    && near(x_max, expected[2])
+                    && near(y_max, expected[3])
+            }
+            Height => near(y_min, expected[1]) && near(y_max, expected[3]),
+            Centered => {
+                near(y_min + y_max, expected[1] + expected[3])
+                    && y_min >= expected[1]
+                    && y_max <= expected[3]
+            }
+        };
+        assert!(matches_box, "{message}");
+        // The widths of the AFM files are the natural ones.
+        let data = standard_glyph_data(font);
+        let gid = data.glyph_id(c as u32).unwrap();
+        assert_eq!(data.advance(gid) as f64, (width * units).round(), "{c}");
+    }
+}
+
+#[test]
+fn joins_the_pieces_of_the_big_delimiters_of_symbol() {
+    // Extension, AFM stem box, advance, and top/middle/bottom pieces with
+    // their AFM boxes. Middle pieces must join at both ends.
+    type Pieces<'a> = &'a [(char, [f64; 4])];
+    let families: [(char, [f64; 4], f64, Pieces, Pieces, Pieces); 6] = [
+        (
+            '\u{239c}',
+            [24.0, -85.0, 108.0, 925.0],
+            384.0,
+            &[('\u{239b}', [24.0, -293.0, 436.0, 926.0])],
+            &[],
+            &[('\u{239d}', [24.0, -293.0, 436.0, 926.0])],
+        ),
+        (
+            '\u{239f}',
+            [382.0, -85.0, 466.0, 925.0],
+            384.0,
+            &[('\u{239e}', [54.0, -293.0, 466.0, 926.0])],
+            &[],
+            &[('\u{23a0}', [54.0, -293.0, 466.0, 926.0])],
+        ),
+        (
+            '\u{23a2}',
+            [0.0, -79.0, 77.0, 925.0],
+            384.0,
+            &[('\u{23a1}', [0.0, -80.0, 349.0, 926.0])],
+            &[],
+            &[('\u{23a3}', [0.0, -80.0, 349.0, 926.0])],
+        ),
+        (
+            '\u{23a5}',
+            [294.0, -79.0, 371.0, 925.0],
+            384.0,
+            &[('\u{23a4}', [22.0, -80.0, 371.0, 926.0])],
+            &[],
+            &[('\u{23a6}', [22.0, -80.0, 371.0, 926.0])],
+        ),
+        // The braces: the same stem on both sides.
+        (
+            '\u{23aa}',
+            [209.0, -85.0, 284.0, 935.0],
+            494.0,
+            &[
+                ('\u{23a7}', [209.0, -85.0, 445.0, 925.0]),
+                ('\u{23ab}', [48.0, -85.0, 284.0, 925.0]),
+            ],
+            &[
+                ('\u{23a8}', [20.0, -85.0, 284.0, 935.0]),
+                ('\u{23ac}', [209.0, -85.0, 473.0, 935.0]),
+            ],
+            &[
+                ('\u{23a9}', [209.0, -75.0, 445.0, 935.0]),
+                ('\u{23ad}', [48.0, -75.0, 284.0, 935.0]),
+            ],
+        ),
+        // In Noto Sans Math, the halves of the integral aren't aligned with its
+        // extension, so the encoder measures the stem of each piece.
+        (
+            '\u{23ae}',
+            [308.0, -88.0, 378.0, 975.0],
+            686.0,
+            &[('\u{2320}', [308.0, -88.0, 675.0, 920.0])],
+            &[],
+            &[('\u{2321}', [11.0, -87.0, 378.0, 921.0])],
+        ),
+    ];
+    for (extension, stem, width, tops, middles, bottoms) in families {
+        let mut pieces = vec![(extension, stem, true, true)];
+        pieces.extend(tops.iter().map(|&(c, b)| (c, b, true, false)));
+        pieces.extend(middles.iter().map(|&(c, b)| (c, b, true, true)));
+        pieces.extend(bottoms.iter().map(|&(c, b)| (c, b, false, true)));
+        let glyphs: Vec<(char, f64)> = pieces.iter().map(|&(c, ..)| (c, width)).collect();
+        let (generated, units) = font_with_widths(StandardFont::Symbol, &glyphs);
+        let near = |a: f64, b: f64| (a - b).abs() <= 2.0;
+        for (i, &(c, afm_box, at_bottom, at_top)) in pieces.iter().enumerate() {
+            let contours = &generated.glyphs[i + 1];
+            let [_, y_min, _, y_max] = outline_bounds(contours);
+            assert!(
+                near(y_min, afm_box[1] * units) && near(y_max, afm_box[3] * units),
+                "{c}"
+            );
+            // Compare stems 15/1000 em inside each joining edge.
+            for (joins, y) in [(at_bottom, afm_box[1] + 15.0), (at_top, afm_box[3] - 15.0)] {
+                if !joins {
+                    continue;
+                }
+                let xs = crossings(contours, y * units);
+                let (x0, x1) = (xs[0], xs[xs.len() - 1]);
+                assert!(
+                    near(x0, stem[0] * units) && near(x1, stem[2] * units),
+                    "{c} at {y}: {:.0}-{:.0}",
+                    x0 / units,
+                    x1 / units
+                );
+            }
+        }
+    }
+}
