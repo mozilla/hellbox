@@ -261,6 +261,8 @@ struct UIntModels {
     /// The number of mantissa bits coded with the models, the next ones being
     /// direct (equiprobable) bits.
     modeled_bits: usize,
+    /// The number of mantissa models per length of a context.
+    mantissa_contexts: usize,
 }
 
 /// The lengths coded by the tree of a `UIntModels` (a power of two), the
@@ -274,6 +276,7 @@ impl UIntModels {
             mantissa: BitModels::new(num_contexts * (MAX_LENGTH_CONTEXT + 1) * MANTISSA_CONTEXTS),
             length_tree: false,
             modeled_bits: MAX_BITS,
+            mantissa_contexts: MANTISSA_CONTEXTS,
         }
     }
 
@@ -288,9 +291,14 @@ impl UIntModels {
     /// bit, then direct bits. The other bits are close to random, where
     /// adaptive models cost more than one bit each.
     fn for_magnitudes(num_contexts: usize) -> Self {
+        // Only node 1 is used; node 0 is unused.
+        let mantissa_contexts = 2;
         UIntModels {
+            unary: BitModels::new(num_contexts * MAX_BITS),
+            mantissa: BitModels::new(num_contexts * (MAX_LENGTH_CONTEXT + 1) * mantissa_contexts),
+            length_tree: true,
             modeled_bits: 1,
-            ..Self::with_length_tree(num_contexts)
+            mantissa_contexts,
         }
     }
 
@@ -321,8 +329,8 @@ impl UIntModels {
                 length += 1;
             }
         }
-        let mantissa_base =
-            (ctx * (MAX_LENGTH_CONTEXT + 1) + length.min(MAX_LENGTH_CONTEXT)) * MANTISSA_CONTEXTS;
+        let mantissa_base = (ctx * (MAX_LENGTH_CONTEXT + 1) + length.min(MAX_LENGTH_CONTEXT))
+            * self.mantissa_contexts;
         let mut result: u64 = 1;
         let modeled = (length - 1).min(self.modeled_bits);
         for j in 0..modeled {
