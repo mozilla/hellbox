@@ -615,6 +615,7 @@ impl PointHistory {
         }
     }
 
+    #[inline]
     fn lookup(&self, hash: u32) -> i64 {
         let slot = self.slots[(hash & self.mask) as usize];
         if (slot ^ hash) & !POSITION_MASK == 0 {
@@ -696,6 +697,7 @@ impl LocalContexts {
         (hash ^ (order as u32).wrapping_mul(HASH_SEED)) as usize & self.mask
     }
 
+    #[inline]
     fn get(&self, order: usize, hash: u32) -> Option<usize> {
         let mut i = self.first_slot(order, hash);
         loop {
