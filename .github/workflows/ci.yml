@@ -113,12 +113,18 @@ jobs:
           RUSTFLAGS: -D warnings
           EMBEDDED_DATA: 0
           OUTPUT: ${{ github.workspace }}/build/wasm-without-data
+      # Build the JS fallback with Docker and compare its output with wasm.
+      - run: node build.js -C && node build.js -co build/wasm-js --no-embedded-data --js-fallback
+        working-directory: .
+      - run: node tools/check_js_fallback.mjs build/wasm-js
+        working-directory: .
       - name: Report the sizes
         run: |
           {
             echo "| File | Bytes |"
             echo "| --- | ---: |"
-            for file in wasm/hellbox.js wasm/hellbox_bg.wasm wasm-without-data/hellbox_bg.wasm; do
+            for file in wasm/hellbox.js wasm/hellbox_bg.wasm wasm-without-data/hellbox_bg.wasm \
+                wasm-js/hellbox.js wasm-js/hellbox_bg.wasm wasm-js/hellbox_nowasm_fallback.js; do
               echo "| \`$file\` | $(stat -c %s "$GITHUB_WORKSPACE/build/$file") |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
@@ -130,3 +136,7 @@ jobs:
         with:
           name: hellbox-wasm-without-data
           path: build/wasm-without-data
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hellbox-wasm-js
+          path: build/wasm-js

@@ -82,6 +82,17 @@ for (const file of standard_font_data_files("Helvetica-Bold")) {
 font_data_files(family, bold, italic, weight, stemV, italicAngle);
 ```
 
+Without WebAssembly (e.g. disabled in the browser), the JS version of the
+module (built with `--js-fallback`, see below) uses the same glue and the same
+data files:
+
+```js
+import { initJs } from "./hellbox.js";
+
+const { default: instantiate } = await import("./hellbox_nowasm_fallback.js");
+initJs(instantiate); // Instead of initSync: the other functions are the same.
+```
+
 Four optional last arguments of `generate_font` (and of
 `generate_standard_font`), e.g. for a text layer:
 
@@ -139,17 +150,22 @@ From the root of the repository:
 node build.js --compile --output my_output_dir
 ```
 
-It builds a Docker image with the toolchain (Rust, the wasm target and
-wasm-pack, see `Dockerfile`) if it doesn't exist yet, then generates
+It builds a Docker image with the toolchain (Rust, the wasm target, wasm-pack
+and binaryen, see `Dockerfile`) if it doesn't exist yet, then generates
 `hellbox.js` and `hellbox_bg.wasm` in the output directory
 (`build/wasm` by default). After a change of the `Dockerfile` (e.g. to update
 the toolchain), `--create` builds the image again: `node build.js -Cco
 my_output_dir` does both. With a local toolchain: `OUTPUT=<dir> ./compile.sh`.
 
-With `--no-embedded-data` (`EMBEDDED_DATA=0 ./compile.sh`), the module only
-has the code (169 KB), the data files (723 KB, see `set_data` above) being
-written in the output directory, e.g. for a JS version of the module, which
-would load the same files.
+With `--no-embedded-data` (`EMBEDDED_DATA=0 ./compile.sh`), data files are
+written beside the module for runtime loading with `set_data`.
+
+With `--js-fallback` too (`JS_FALLBACK=1`), the build also writes
+`hellbox_nowasm_fallback.js`, translated by binaryen's `wasm2js`. Load it
+with `initJs` (see above). The build disables reference types and multivalue,
+lowers instructions for the JS translation, and adapts the glue's memory
+views for JS memory growth. `node tools/check_js_fallback.mjs <dir>` compares
+selected fonts and missing-glyph indices from the two versions.
 
 ## Encoder
 
@@ -297,8 +313,9 @@ pull requests:
   encoder, and for wasm32) and the docs, the warnings being errors; the tests
   on Linux, macOS and Windows (the fonts must be the same everywhere), also
   with the data provided at runtime; the files of `data/` built from the fonts
-  of `../sources/` (cached); the wasm module, with and without the data (its
-  sizes are in the summary of the run, and they're artifacts).
+  of `../sources/` (cached); the wasm module, with and without the data, and
+  with its JS version (built with `build.js`, and checked against the wasm
+  module): their sizes are in the summary of the run, and they're artifacts.
 - `codspeed.yml`: the benchmarks, measured by CodSpeed (the repository must
   be enabled on [codspeed.io](https://codspeed.io), which authenticates the
   runs with OIDC).

@@ -42,7 +42,7 @@ async function hasImage() {
   }
 }
 
-async function compile(output, embeddedData) {
+async function compile(output, embeddedData, jsFallback) {
   output = resolve(output);
   await fs.promises.mkdir(output, { recursive: true });
   if (!(await hasImage())) {
@@ -65,13 +65,19 @@ async function compile(output, embeddedData) {
     "OUTPUT=/out",
     "-e",
     `EMBEDDED_DATA=${embeddedData ? 1 : 0}`,
+    "-e",
+    `JS_FALLBACK=${jsFallback ? 1 : 0}`,
     "-v",
     `${CRATE}:/code`,
     "-v",
     `${output}:/out`,
     IMAGE,
   ]);
-  for (const name of ["hellbox.js", "hellbox_bg.wasm"]) {
+  const names = ["hellbox.js", "hellbox_bg.wasm"];
+  if (jsFallback) {
+    names.push("hellbox_nowasm_fallback.js");
+  }
+  for (const name of names) {
     const { size } = await fs.promises.stat(join(output, name));
     console.log(`${join(output, name)}: ${size} bytes`);
   }
@@ -87,6 +93,9 @@ const USAGE = `Usage: node build.js [options]
   --no-embedded-data   Don't embed the data files in the module: they're
                        written in the output directory, to provide at
                        runtime (see \`set_data\` in rust/README.md)
+  --js-fallback        With --no-embedded-data, also write a JS version of
+                       the module (hellbox_nowasm_fallback.js), for when
+                       WebAssembly isn't available
   -h, --help           Show this help`;
 
 async function main() {
@@ -100,6 +109,7 @@ async function main() {
         default: join(__dirname, "build", "wasm"),
       },
       "no-embedded-data": { type: "boolean" },
+      "js-fallback": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -110,8 +120,11 @@ async function main() {
   if (args.create) {
     await create();
   }
+  if (args["js-fallback"] && !args["no-embedded-data"]) {
+    throw new Error("--js-fallback needs --no-embedded-data.");
+  }
   if (args.compile) {
-    await compile(args.output, !args["no-embedded-data"]);
+    await compile(args.output, !args["no-embedded-data"], args["js-fallback"]);
   }
 }
 

@@ -9,5 +9,16 @@ FROM rust:latest
 RUN rustup target add wasm32-unknown-unknown && \
     cargo install wasm-pack
 
+# Binaryen for the JS fallback. Keep it outside PATH so wasm-pack can use
+# its own wasm-opt.
+RUN echo "deb http://deb.debian.org/debian unstable main" \
+      > /etc/apt/sources.list.d/unstable.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends -t unstable binaryen && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /opt/binaryen && \
+    for tool in /usr/bin/wasm*; do mv "$tool" /opt/binaryen/; done
+ENV BINARYEN=/opt/binaryen
+
 WORKDIR /code
 CMD ["/bin/sh", "-c", "/code/compile.sh"]
