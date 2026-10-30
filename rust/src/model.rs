@@ -656,6 +656,75 @@ impl PointHistory {
     }
 }
 
+/// Maps (order, hash) to the last point following that context in the current
+/// contour. Stamps let the open-addressing table be reused across contours.
+#[derive(Default)]
+struct LocalContexts {
+    slots: Vec<LocalSlot>,
+    mask: usize,
+    stamp: u32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct LocalSlot {
+    hash: u32,
+    order: u32,
+    stamp: u32,
+    position: u32,
+}
+
+impl LocalContexts {
+    /// Reserves MAX_ORDER contexts per point at <= 50% load.
+    /// Clears slots on stamp overflow.
+    fn reset(&mut self, n: usize) {
+        let size = (2 * MAX_ORDER * n).next_power_of_two();
+        if size > self.slots.len() {
+            self.slots.resize(size, LocalSlot::default());
+        }
+        self.mask = size - 1;
+        if self.stamp == u32::MAX {
+            self.slots.fill(LocalSlot::default());
+            self.stamp = 0;
+        }
+        self.stamp += 1;
+    }
+
+    fn first_slot(&self, order: usize, hash: u32) -> usize {
+        (hash ^ (order as u32).wrapping_mul(HASH_SEED)) as usize & self.mask
+    }
+
+    fn get(&self, order: usize, hash: u32) -> Option<usize> {
+        let mut i = self.first_slot(order, hash);
+        loop {
+            let slot = &self.slots[i];
+            if slot.stamp != self.stamp {
+                return None;
+            }
+            if slot.hash == hash && slot.order == order as u32 {
+                return Some(slot.position as usize);
+            }
+            i = (i + 1) & self.mask;
+        }
+    }
+
+    fn insert(&mut self, order: usize, hash: u32, position: usize) {
+        let mut i = self.first_slot(order, hash);
+        loop {
+            let slot = &mut self.slots[i];
+            if slot.stamp != self.stamp || (slot.hash == hash && slot.order == order as u32) {
+                *slot = LocalSlot {
+                    hash,
+                    order: order as u32,
+                    stamp: self.stamp,
+                    position: position as u32,
+                };
+                return;
+            }
+            i = (i + 1) & self.mask;
+        }
+    }
+}
+
 /// A contour of the dictionary: its points as deltas (dx[0] = dy[0] = 0), the
 /// start of its last occurrence, the entry of the contour which followed it
 /// and the glyph of its last occurrence.
@@ -976,6 +1045,7 @@ pub(crate) struct Model {
     prev_glyph_entries: Vec<usize>,
     glyph_index: i64,
     history: PointHistory,
+    local: LocalContexts,
     /// The number of glyphs of the payload.
     num_glyphs: usize,
 }
@@ -1039,6 +1109,7 @@ impl Model {
             prev_glyph_entries: Vec::new(),
             glyph_index: 0,
             history: PointHistory::empty(),
+            local: LocalContexts::default(),
             num_glyphs: 0,
         }
     }
@@ -1862,10 +1933,7 @@ impl Model {
         let mut pdy = 0i64;
         let mut prev_on = 1usize;
         let mut prev_prev_on = 1usize;
-        // Contexts of the current contour, which isn't in the history yet.
-        // At most MAX_ORDER contexts per point.
-        let mut local: IntMap<u64, usize> =
-            IntMap::with_capacity_and_hasher(MAX_ORDER * n, Default::default());
+        self.local.reset(n);
         let mut hits = 0usize;
         let mut prev_symmetric = 0usize;
         let mut contour_hashes = Vec::with_capacity(n);
@@ -1884,7 +1952,7 @@ impl Model {
             let mut local_prediction = None;
             while order >= 1 {
                 let hash = hashes[order - 1];
-                local_prediction = local.get(&(((order as u64) << 32) | hash as u64)).copied();
+                local_prediction = self.local.get(order, hash);
                 if local_prediction.is_some() {
                     break;
                 }
@@ -1895,7 +1963,7 @@ impl Model {
                 order -= 1;
             }
             for k in 1..=max_order {
-                local.insert(((k as u64) << 32) | hashes[k - 1] as u64, i);
+                self.local.insert(k, hashes[k - 1], i);
             }
             if order >= 1 {
                 let (p_on, pdxp, pdyp) = match local_prediction {
@@ -1942,7 +2010,7 @@ impl Model {
             // Else, the last deltas may be a symmetric copy of earlier ones
             // (mirrored or rotated), in the contour or in the history.
             if let Some((kind, p_on, sdx, sdy)) = self
-                .symmetric_prediction(&local, &on, &x, &y, i)
+                .symmetric_prediction(&on, &x, &y, i)
                 .filter(|&(_, p_on, sdx, sdy)| missed != Some((p_on, sdx, sdy)))
             {
                 let given = C::ENCODING
@@ -2053,7 +2121,6 @@ impl Model {
     /// is (index of the symmetry, in the history).
     fn symmetric_prediction(
         &self,
-        local: &IntMap<u64, usize>,
         on: &[u8],
         x: &[i32],
         y: &[i32],
@@ -2094,7 +2161,7 @@ impl Model {
             // The prediction: the delta p - order - 1 (mirrors), whose start
             // is the copy of the point i, or the delta p (rotation).
             let back = order + 1;
-            if let Some(&p) = local.get(&(((order as u64) << 32) | hash as u64)) {
+            if let Some(p) = self.local.get(order, hash) {
                 if reversed && p > back {
                     let (dx, dy) = f(d(p - back));
                     return Some((kind, on[p - back - 1], dx as i64, dy as i64));
