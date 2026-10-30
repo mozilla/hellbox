@@ -39,6 +39,7 @@ pub(crate) enum SourceGlyph {
     Composite(Vec<SourceComponent>),
 }
 
+#[derive(Default)]
 pub(crate) struct SourceFont {
     pub units_per_em: u16,
     pub ascender: i16,

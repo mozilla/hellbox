@@ -51,7 +51,12 @@ PDF: [Arimo](https://github.com/googlefonts/arimo) and
 [Liberation Mono](https://github.com/liberationfonts/liberation-fonts) 2.1.5
 for Courier (New): 96-98% of the widths of the AFM files of Helvetica and Times
 are the same, and all the ones of Courier. The symbols come from some unhinted
-[Noto](https://notofonts.github.io/) fonts.
+[Noto](https://notofonts.github.io/) fonts. The glyphs of Symbol and
+ZapfDingbats are moved onto the bounding boxes of the AFM files of these fonts
+(the Core 14 AFM files of Adobe), with their widths, where the PDF files using
+them expect them: exactly for the pieces which must join (those of the big
+delimiters, integrals and arrows, the radical and its extension), the other
+glyphs keeping their proportions.
 
 | File                    | Size    | Codepoints | Content                                                  |
 | ----------------------- | ------- | ---------- | -------------------------------------------------------- |
@@ -64,15 +69,15 @@ are the same, and all the ones of Courier. The symbols come from some unhinted
 | `Mono-Regular.hbgd`     | 49.0 KB | 2305       | Liberation Mono (also Courier and Courier-Oblique)        |
 | `Mono-Bold.hbgd`        | 49.3 KB | 2305       | Liberation Mono Bold (also Courier-Bold and Courier-BoldOblique) |
 | `NotoSymbols.hbgd`      | 70.6 KB | 1757       | Arrows, math operators, technical symbols, geometric shapes, dingbats... (from Noto Sans Math, Symbols, Symbols 2 and Mono), only what's missing in the 3 families |
-| `Symbol.hbgd`           | 8.3 KB  | 186        | The glyphs of Symbol, as pdf.js maps them to Unicode: from Tinos (Greek, ...), Noto Sans Math and Noto Sans Symbols |
-| `ZapfDingbats.hbgd`     | 16.6 KB | 202        | The glyphs of ZapfDingbats, from Noto Sans Symbols 2 and Noto Sans Symbols |
+| `Symbol.hbgd`           | 8.7 KB  | 186        | Symbol glyphs (Greek, operators and delimiter pieces), from Tinos, Noto Sans Math and Noto Sans Symbols |
+| `ZapfDingbats.hbgd`     | 16.5 KB | 202        | The glyphs of ZapfDingbats, from Noto Sans Symbols 2 and Noto Sans Symbols |
 | `Wingdings.hbgd`        | 35.1 KB | 646        | The glyphs of Wingdings, Wingdings 2 and Wingdings 3 at their Unicode codepoints (pdf.js maps their codes), from Noto Sans Symbols 2, Noto Sans Symbols, Noto Sans Math and Tinos |
 
 They're compressed with a dedicated codec (see [Compression](#compression)):
-709 KB in total. `NotoSymbols.hbgd` is used as a fallback for all the fonts.
+710 KB in total. `NotoSymbols.hbgd` is used as a fallback for all the fonts.
 
-The data is lossless (the decoded outlines are checked against the source
-fonts when the files are built).
+The data is lossless (the decoded outlines are checked against the glyphs of
+the source fonts, or the moved ones, when the files are built).
 
 ## The generated fonts
 
@@ -163,7 +168,7 @@ references), the decoder just follows its decisions
 | Mono (2 styles)               | 199 kB  | 119 kB  | 113 kB    | 112 kB | 98 kB  |
 | Symbols, Symbol, ZapfDingbats | 203 kB  | 125 kB  | 119 kB    | 118 kB | 96 kB  |
 | Wingdings                     | 80 kB   | 48 kB   | 45 kB     | 45 kB  | 35 kB  |
-| All                           | 1.49 MB | 894 kB  | 828 kB    | 826 kB | 709 kB |
+| All                           | 1.49 MB | 894 kB  | 828 kB    | 826 kB | 710 kB |
 
 (kB = 1000 bytes.) The same glyphs as fonts (the same codepoints from the same
 source fonts, subset with fontTools: unhinted, without glyph names and layout
@@ -177,7 +182,7 @@ post tables):
 | Mono (2 styles)               | 313 kB   | 179 kB  | 126 kB | 98 kB  |
 | Symbols, Symbol, ZapfDingbats | 281 kB   | 155 kB  | 126 kB | 96 kB  |
 | Wingdings                     | 113 kB   | 59 kB   | 50 kB  | 35 kB  |
-| All                           | 2.20 MB  | 1.27 MB | 914 kB | 709 kB |
+| All                           | 2.20 MB  | 1.27 MB | 914 kB | 710 kB |
 
 WOFF is compressed with zopfli (100 iterations, 3% smaller than zlib level
 9), WOFF2 with brotli 11 and its glyf, loca and hmtx transforms: the files of

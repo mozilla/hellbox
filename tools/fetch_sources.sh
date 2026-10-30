@@ -3,8 +3,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-# Downloads source fonts and their SIL Open Font License files into sources/.
-# Font binaries are pinned by commit or release and verified below with SHA-256.
+# Downloads source fonts, their licenses, and Adobe's Symbol/ZapfDingbats
+# AFM files with their redistribution notice into sources/.
+# Font binaries and AFM files are pinned and checked with SHA-256 below.
 set -eu
 
 DIR="$(dirname "$0")/../sources"
@@ -30,6 +31,12 @@ done
 curl -sSfL -o "$DIR/OFL.txt" \
   "https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/main/OFL.txt"
 
+# The Core 14 AFM files of Adobe, as distributed by PDFBox.
+AFM=https://raw.githubusercontent.com/apache/pdfbox/78be2c012e6b5f0c0b368dc9863fc01e9ec78f85/pdfbox/src/main/resources/org/apache/pdfbox/resources/afm
+for file in Symbol.afm ZapfDingbats.afm MustRead.html; do
+  curl -sSfL -o "$DIR/$file" "$AFM/$file"
+done
+
 LIBERATION=liberation-fonts-ttf-2.1.5
 curl -sSfL -o "$DIR/$LIBERATION.tar.gz" \
   "https://github.com/liberationfonts/liberation-fonts/files/7261482/$LIBERATION.tar.gz"
@@ -51,12 +58,15 @@ c46fda6859efb80c0a3c1faa868908a3d2fcb26eb7fd9602d73bebeec21bca3a  LICENSE_ARIMO
 cb3382d4643e8b02c12e322c220a3c76a5020d667e4fd4e7c75e744cca6caa6b  LICENSE_TINOS
 bd62a0672d0b9b6710b01df434c80ad54fa5f0835207eb7b17b7a761463067bb  LiberationMono-Bold.ttf
 f2b83c763e8afd21709333370bed4774337fae82267937e2b5aea7e2fbd922c1  LiberationMono-Regular.ttf
+b226bfc00e1b8b8a80c7b3cfbbc322d13b4b0401f94cdeafdd93b2210ad802eb  MustRead.html
 b127e84699212b6b2ef50aff58e0ebebeec04ffe6db1b9eb9e209c8c3d97b4aa  NotoSansMath-Regular.ttf
 87f8ce0522a6c99b743ee5fc75b4073cfdd575639119672828b7b9944b65b4f4  NotoSansMono-Regular.ttf
 6eea9cb4cd39269ea9f95ba5c2735f80ae74049dfc9e1a7c932a5cfc8f0c3030  NotoSansSymbols-Regular.ttf
 c4a0a80f0041ce4be81e2478faad22776d23edb98ae3f0d19bd37044820ecf9d  NotoSansSymbols2-Regular.ttf
+13eeef80def2f9a8d3a31a980731376823e8b48340ff3891ffc1cc0299c0b4fe  Symbol.afm
 393269dbab8899f938db19783eca5eac92eb431f7ae0ab45b8349ca895f1a06b  Tinos-Bold.ttf
 a5de79f0fe863ea0954757acb3d47b3ccd0a930ce3dd5b97230cd3866790a06e  Tinos-BoldItalic.ttf
 5942266ed398b155d7dc23e36833e7ec6be988f2439bdbeb8ef1bede808eaa91  Tinos-Italic.ttf
 60a0e8ef0c04dd5dd69ffe91025fa2ae5836cbd35600a82ba031977557e2cb61  Tinos-Regular.ttf
+d3e7b9f6366ab0df06acbb217c8586c5962ff2efbd4e1b5566c7eaf5b745dd41  ZapfDingbats.afm
 EOF
