@@ -896,9 +896,65 @@ pub(crate) struct Contour {
     hashes: Vec<[u32; MAX_ORDER]>,
 }
 
-/// Predicted deltas of a reference: transformed (scaled, and optionally
-/// sheared: hx is the contribution of dy to dx and hy the one of dx to dy, in
-/// `SCALE_ONE` units), or blended with a partner.
+/// The prediction of the deltas of a reference: transformed (scaled, and
+/// optionally sheared: hx is the contribution of dy to dx and hy the one of dx
+/// to dy, in `SCALE_ONE` units), or blended with a partner.
+#[derive(Clone, Copy)]
+struct DeltaPrediction<'a> {
+    entry: &'a ContourEntry,
+    partner: Option<&'a ContourEntry>,
+    kx: i64,
+    ky: i64,
+    bx: i64,
+    by: i64,
+    hx: i64,
+    hy: i64,
+}
+
+impl DeltaPrediction<'_> {
+    /// The predicted delta i (from the point i - 1, i > 0).
+    #[inline]
+    fn delta(&self, i: usize) -> (i64, i64) {
+        let ex = self.entry.dx[i] as i64;
+        let ey = self.entry.dy[i] as i64;
+        if let Some(p) = self.partner {
+            (
+                blend_delta(ex, p.dx[i] as i64, self.bx),
+                blend_delta(ey, p.dy[i] as i64, self.by),
+            )
+        } else if self.hx != 0 || self.hy != 0 {
+            (
+                (ex.wrapping_mul(SCALE_ONE + self.kx) + ey.wrapping_mul(self.hx) + SCALE_ONE / 2)
+                    .div_euclid(SCALE_ONE),
+                (ey.wrapping_mul(SCALE_ONE + self.ky) + ex.wrapping_mul(self.hy) + SCALE_ONE / 2)
+                    .div_euclid(SCALE_ONE),
+            )
+        } else {
+            (scale_delta(ex, self.kx), scale_delta(ey, self.ky))
+        }
+    }
+
+    /// Accumulates predicted deltas from (x0, y0).
+    fn points(&self, x0: i64, y0: i64) -> (Vec<i32>, Vec<i32>) {
+        let n = self.entry.on.len();
+        let mut x = Vec::with_capacity(n);
+        let mut y = Vec::with_capacity(n);
+        let (mut px, mut py) = (x0, y0);
+        x.push(px as i32);
+        y.push(py as i32);
+        for i in 1..n {
+            let (dx, dy) = self.delta(i);
+            px = px.wrapping_add(dx);
+            py = py.wrapping_add(dy);
+            x.push(px as i32);
+            y.push(py as i32);
+        }
+        (x, y)
+    }
+}
+
+/// Predicted deltas of a reference (see `DeltaPrediction`).
+#[cfg(feature = "encoder")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn predict_deltas(
     entry: &ContourEntry,
@@ -910,28 +966,26 @@ pub(crate) fn predict_deltas(
     hx: i64,
     hy: i64,
 ) -> (Vec<i64>, Vec<i64>) {
+    let prediction = DeltaPrediction {
+        entry,
+        partner,
+        kx,
+        ky,
+        bx,
+        by,
+        hx,
+        hy,
+    };
     let n = entry.on.len();
     let mut dx = vec![0; n];
     let mut dy = vec![0; n];
     for i in 1..n {
-        let ex = entry.dx[i] as i64;
-        let ey = entry.dy[i] as i64;
-        if let Some(p) = partner {
-            dx[i] = blend_delta(ex, p.dx[i] as i64, bx);
-            dy[i] = blend_delta(ey, p.dy[i] as i64, by);
-        } else if hx != 0 || hy != 0 {
-            dx[i] = (ex.wrapping_mul(SCALE_ONE + kx) + ey.wrapping_mul(hx) + SCALE_ONE / 2)
-                .div_euclid(SCALE_ONE);
-            dy[i] = (ey.wrapping_mul(SCALE_ONE + ky) + ex.wrapping_mul(hy) + SCALE_ONE / 2)
-                .div_euclid(SCALE_ONE);
-        } else {
-            dx[i] = scale_delta(ex, kx);
-            dy[i] = scale_delta(ey, ky);
-        }
+        (dx[i], dy[i]) = prediction.delta(i);
     }
     (dx, dy)
 }
 
+#[cfg(feature = "encoder")]
 pub(crate) fn place_deltas(x0: i64, y0: i64, dx: &[i64], dy: &[i64]) -> (Vec<i32>, Vec<i32>) {
     let n = dx.len();
     let mut x = vec![0; n];
@@ -1361,6 +1415,10 @@ impl Model {
             let n = contour.on.len();
             self.history
                 .add(&contour.on, &contour.x, &contour.y, &contour.hashes);
+            sizes.push(n as u16);
+            all_on.extend_from_slice(&contour.on);
+            all_x.extend_from_slice(&contour.x);
+            all_y.extend_from_slice(&contour.y);
 
             // Update the dictionary.
             let list_key = n as u64;
@@ -1373,17 +1431,16 @@ impl Model {
                 _ => (-1, contour.x[0] as i64, contour.y[0] as i64),
             };
             let new_entry = if contour.mode == MODE_NEW || !contour.exact {
-                let mut dx = vec![0i32; n];
-                let mut dy = vec![0i32; n];
-                for i in 1..n {
-                    dx[i] = contour.x[i].wrapping_sub(contour.x[i - 1]);
-                    dy[i] = contour.y[i].wrapping_sub(contour.y[i - 1]);
-                }
+                let deltas = |v: &[i32]| -> Vec<i32> {
+                    std::iter::once(0)
+                        .chain(v.windows(2).map(|w| w[1].wrapping_sub(w[0])))
+                        .collect()
+                };
                 let id = self.entries.len();
                 self.entries.push(ContourEntry {
-                    on: contour.on.clone(),
-                    dx,
-                    dy,
+                    on: contour.on,
+                    dx: deltas(&contour.x),
+                    dy: deltas(&contour.y),
                     start_x: 0,
                     start_y: 0,
                     next: None,
@@ -1432,11 +1489,6 @@ impl Model {
             state.ky = contour.ky;
             state.prev_mode = contour.mode;
             state.prev_n = n;
-
-            sizes.push(n as u16);
-            all_on.extend_from_slice(&contour.on);
-            all_x.extend_from_slice(&contour.x);
-            all_y.extend_from_slice(&contour.y);
         }
         self.prev_glyph_entries = entries;
         Ok((sizes, all_on, all_x, all_y))
@@ -1510,8 +1562,17 @@ impl Model {
                 };
                 let (x0, y0) = self.predict_start(entry, state, kx, ky, together);
                 let e = &self.entries[entry];
-                let (dx, dy) = predict_deltas(e, kx, ky, None, 0, 0, 0, 0);
-                let (x, y) = place_deltas(x0, y0, &dx, &dy);
+                let prediction = DeltaPrediction {
+                    entry: e,
+                    partner: None,
+                    kx,
+                    ky,
+                    bx: 0,
+                    by: 0,
+                    hx: 0,
+                    hy: 0,
+                };
+                let (x, y) = prediction.points(x0, y0);
                 Ok(Contour {
                     mode,
                     entry: Some(entry),
@@ -1553,15 +1614,18 @@ impl Model {
         let decision = input.map(|(_, d)| d);
         // The reference is one of the predicted entries, or given by its
         // number of points and its rank in the list.
-        let mut predictions = Vec::with_capacity(3);
+        let mut predicted = [0; 3];
+        let mut num_predicted = 0;
         for entry in [state.successor, state.same_index, state.successor2]
             .into_iter()
             .flatten()
         {
-            if !predictions.contains(&entry) {
-                predictions.push(entry);
+            if !predicted[..num_predicted].contains(&entry) {
+                predicted[num_predicted] = entry;
+                num_predicted += 1;
             }
         }
+        let predictions = &predicted[..num_predicted];
         let given_entry = decision.and_then(|d| d.entry);
         let first_ctx = if predictions.len() == 3 {
             3
@@ -1709,17 +1773,17 @@ impl Model {
         // Knowing whether the x one is wrong.
         let y_ctx = 4 + together_ctx * 2 + usize::from(rx != 0);
         let y0 = py0 + self.translation.code(c, y_ctx, given);
-        let (pdx, pdy) = predict_deltas(
-            &self.entries[entry],
+        let prediction = DeltaPrediction {
+            entry: &self.entries[entry],
+            partner: partner.map(|p| &self.entries[p]),
             kx,
             ky,
-            partner.map(|p| &self.entries[p]),
             bx,
             by,
             hx,
             hy,
-        );
-        let (mut x, mut y) = place_deltas(x0, y0, &pdx, &pdy);
+        };
+        let (mut x, mut y) = prediction.points(x0, y0);
         let on = self.entries[entry].on.clone();
         let is_exact = contour.is_none_or(|k| k.x == x && k.y == y);
         let exact = c.bit(
@@ -1744,8 +1808,7 @@ impl Model {
             // Previous corrections and accumulated displacement, per axis.
             let (mut prx, mut pry, mut acc_x, mut acc_y) = (0i64, 0i64, 0i64, 0i64);
             for i in 1..n {
-                let mut dx = pdx[i];
-                let mut dy = pdy[i];
+                let (mut dx, mut dy) = prediction.delta(i);
                 let rx = contour.map_or(0, |k| k.x[i] as i64 - k.x[i - 1] as i64 - dx);
                 let ry = contour.map_or(0, |k| k.y[i] as i64 - k.y[i - 1] as i64 - dy);
                 let zero = c.bit(
