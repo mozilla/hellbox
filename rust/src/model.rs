@@ -517,14 +517,6 @@ fn finish_hash(h: u32, order: usize, first_on: u8) -> u32 {
     h ^ (h >> 15)
 }
 
-/// The hash of a context: its deltas, from the last one (so that the
-/// contexts of increasing orders extend each other, see `context_hashes`),
-/// with the on-curve state of their ends, and the on-curve state of the point
-/// before them.
-fn hash_items(order: usize, items: impl Iterator<Item = (i32, i32, u8)>, first_on: u8) -> u32 {
-    finish_hash(items.fold(HASH_SEED, hash_item), order, first_on)
-}
-
 /// The hashes of the contexts of the point i, for the orders 1 to
 /// min(MAX_ORDER, i - 1) (the other ones are 0).
 fn context_hashes(on: &[u8], x: &[i32], y: &[i32], i: usize) -> [u32; MAX_ORDER] {
@@ -2206,31 +2198,32 @@ impl Model {
             return None;
         }
         let history = &self.history;
+        // The deltas i - t, for t from 1 to order.
+        let mut deltas = [(0, 0); SYMMETRY_ORDER];
+        for (t, delta) in deltas.iter_mut().enumerate() {
+            *delta = d(i - 1 - t);
+        }
         for (s, &(fx, fy, reversed)) in SYMMETRIES.iter().enumerate() {
             let kind = s * 2;
             let f = |(dx, dy): (i32, i32)| (dx.wrapping_mul(fx), dy.wrapping_mul(fy));
-            // The context at a position p of a copy: the deltas p - order to
-            // p - 1, the on-curve states of their ends and of the point
-            // p - order - 1. A mirror is in the reverse order: its delta p - t
-            // is the copy of the delta i - (order + 1 - t).
+            // The context at a position p of a copy (see `context_hashes`):
+            // the deltas p - 1 to p - order, the on-curve states of their ends
+            // and of the point p - order - 1. A mirror is in the reverse
+            // order: its delta p - t is the copy of the delta
+            // i - (order + 1 - t).
+            let mut h = HASH_SEED;
             let hash = if reversed {
-                hash_items(
-                    order,
-                    (1..=order).rev().map(|t| {
-                        let (a, b) = f(d(i - t));
-                        (a, b, on[i - t - 1])
-                    }),
-                    on[i - 1],
-                )
+                for t in (1..=order).rev() {
+                    let (a, b) = f(deltas[t - 1]);
+                    h = hash_item(h, (a, b, on[i - t - 1]));
+                }
+                finish_hash(h, order, on[i - 1])
             } else {
-                hash_items(
-                    order,
-                    (1..=order).map(|t| {
-                        let (a, b) = f(d(i - t));
-                        (a, b, on[i - t])
-                    }),
-                    on[i - order - 1],
-                )
+                for t in 1..=order {
+                    let (a, b) = f(deltas[t - 1]);
+                    h = hash_item(h, (a, b, on[i - t]));
+                }
+                finish_hash(h, order, on[i - order - 1])
             };
             // The prediction: the delta p - order - 1 (mirrors), whose start
             // is the copy of the point i, or the delta p (rotation).
