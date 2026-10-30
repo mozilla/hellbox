@@ -6,6 +6,8 @@
 //! the char codes and the widths, the emboldening, the slant, the ligatures
 //! and sequences, the fallback glyph data, the standard fonts.
 
+#![cfg(feature = "embedded-data")]
+
 use hellbox::{
     generate_font, generate_standard_font, glyph_data, missing_standard_glyphs,
     standard_glyph_data, style_glyph_data, symbols_glyph_data, Family, GlyphData, Kerning, Options,

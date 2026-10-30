@@ -27,6 +27,9 @@ read-fonts = { version = "0.46", default-features = false, features = ["std"], o
 unicode-normalization = { version = "=0.1.25", optional = true }
 
 [features]
+default = ["embedded-data"]
+# Embed data/; otherwise load it at runtime with `set_data`.
+embedded-data = []
 # The encoder of the glyph data files, and its tools (src/bin/).
 encoder = ["dep:read-fonts", "dep:flate2", "dep:unicode-normalization"]
 
@@ -60,3 +63,4 @@ harness = false
 [[bench]]
 name = "fonts"
 harness = false
+required-features = ["embedded-data"]

@@ -3,7 +3,8 @@
 A Rust library (compiled to wasm for pdf.js) which generates TrueType fonts
 with exactly the requested glyphs, to replace the fonts which aren't embedded
 in PDF files. The glyph data (see `../FORMAT.md`) is embedded in the library
-(729 KB in total):
+or provided at runtime without the `embedded-data` feature
+(see below):
 
 - three families (see `Family`), from Arimo and Tinos, which have the metrics
   of Helvetica and Times, and Liberation Mono, which has the ones of Courier:
@@ -64,6 +65,23 @@ standard_font_codepoints("Helvetica"); // Uint32Array
 The glyphs which aren't in a family are taken from the symbols (which are only
 decoded then), and synthesized to the style of the font.
 
+The module can be built without the data files (`--no-embedded-data`, see
+below): the ones a font needs must then be provided first, they're kept by the
+module (the functions throw an error, "Missing data files: ...", without
+them):
+
+```js
+// E.g. ["Sans-Bold.hbgd", "NotoSymbols.hbgd", "unicode.bin"]: its style, the
+// fallbacks and the Unicode tables.
+for (const file of standard_font_data_files("Helvetica-Bold")) {
+  if (!has_data(file)) {
+    set_data(file, fetchSync(`${dataUrl}${file}`)); // Uint8Array
+  }
+}
+// For a font of a family: the arguments of generate_font about the style.
+font_data_files(family, bold, italic, weight, stemV, italicAngle);
+```
+
 Four optional last arguments of `generate_font` (and of
 `generate_standard_font`), e.g. for a text layer:
 
@@ -108,6 +126,11 @@ let font = generate_font(Family::Serif, &glyphs, &options);
 let font = generate_standard_font(StandardFont::TimesBoldItalic, &glyphs, &Options::default());
 ```
 
+Without the `embedded-data` feature (on by default), the data files needed by
+a font (`standard_font_data_files` and `font_data_files`, among the ones of
+`data_file_names`) must be given to `set_data` first: a function needing a
+file which isn't there panics.
+
 ## Building the wasm module
 
 From the root of the repository:
@@ -118,10 +141,15 @@ node build.js --compile --output my_output_dir
 
 It builds a Docker image with the toolchain (Rust, the wasm target and
 wasm-pack, see `Dockerfile`) if it doesn't exist yet, then generates
-`hellbox.js` and `hellbox_bg.wasm` (884 KB) in the output directory
+`hellbox.js` and `hellbox_bg.wasm` in the output directory
 (`build/wasm` by default). After a change of the `Dockerfile` (e.g. to update
 the toolchain), `--create` builds the image again: `node build.js -Cco
 my_output_dir` does both. With a local toolchain: `OUTPUT=<dir> ./compile.sh`.
+
+With `--no-embedded-data` (`EMBEDDED_DATA=0 ./compile.sh`), the module only
+has the code (169 KB), the data files (723 KB, see `set_data` above) being
+written in the output directory, e.g. for a JS version of the module, which
+would load the same files.
 
 ## Encoder
 
@@ -178,6 +206,9 @@ bigger ones (e.g. CJK) by a few bytes. The model rounds ties towards
 
 ```sh
 cargo test --release
+# The data files provided at runtime (tests/data_files.rs: the files listed
+# for each font are the ones it needs, each in a process of its own).
+cargo test --release --no-default-features
 ```
 
 `tests/snapshots.rs` checks that the decoded glyph data and some generated
@@ -262,11 +293,12 @@ codspeed run -m simulation -- cargo codspeed run
 The workflows of `../.github/workflows/` run on the pushes to `main` and the
 pull requests:
 
-- `ci.yml`: rustfmt, clippy (without features, with the encoder, and for
-  wasm32) and the docs, the warnings being errors; the tests on Linux, macOS
-  and Windows (the fonts must be the same everywhere); the files of `data/`
-  built from the fonts of `../sources/` (cached); the wasm module (its sizes
-  are in the summary of the run, and it's an artifact).
+- `ci.yml`: rustfmt, clippy (with and without the embedded data, with the
+  encoder, and for wasm32) and the docs, the warnings being errors; the tests
+  on Linux, macOS and Windows (the fonts must be the same everywhere), also
+  with the data provided at runtime; the files of `data/` built from the fonts
+  of `../sources/` (cached); the wasm module, with and without the data (its
+  sizes are in the summary of the run, and they're artifacts).
 - `codspeed.yml`: the benchmarks, measured by CodSpeed (the repository must
   be enabled on [codspeed.io](https://codspeed.io), which authenticates the
   runs with OIDC).

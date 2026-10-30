@@ -535,7 +535,7 @@ impl Glyphs {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "embedded-data"))]
 mod tests {
     use super::Glyph;
     use crate::{glyph_data, Family};

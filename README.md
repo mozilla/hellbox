@@ -19,7 +19,8 @@ fonts would be far too big, so this repository provides:
 - compact glyph data files (`rust/data/*.hbgd`) containing only the outlines
   and advance widths of the glyphs, plus a few metrics (no hinting, glyph names
   or layout tables). See [FORMAT.md](FORMAT.md).
-- a Rust library, compiled to wasm for pdf.js, which embeds the data and
+- a Rust library, compiled to wasm for pdf.js, which embeds the data (or
+  loads the data files given at runtime, see [rust/](rust/README.md)) and
   synthesizes a TrueType font containing only the requested glyphs, for the
   standard fonts of PDF and for any other font of the three families
   (sans-serif, serif, monospace):

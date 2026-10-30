@@ -7,6 +7,10 @@
 //! embedded in PDF files: the standard fonts of PDF (see `StandardFont`), and
 //! the other fonts of each family (see `Family`).
 //!
+//! The default `embedded-data` feature embeds `data/`. Without it, call
+//! `set_data` for the files listed by `standard_font_data_files` or
+//! `font_data_files` before generating a font.
+//!
 //! Each glyph is horizontally scaled to the width given by the PDF, its stems
 //! getting the scale of the font (see `font_builder`). The glyphs
 //! come from the embedded style of the family closest to the requested one
@@ -18,6 +22,11 @@
 //! ```
 //! use hellbox::{generate_font, Family, Options, Request};
 //!
+//! # #[cfg(not(feature = "embedded-data"))]
+//! # for name in hellbox::data_file_names() {
+//! #     let path = format!("{}/data/{name}", env!("CARGO_MANIFEST_DIR"));
+//! #     hellbox::set_data(name, std::fs::read(path).unwrap()).unwrap();
+//! # }
 //! let glyphs = [
 //!     Request { unicode: vec!['A' as u32], width: Some(667.0), char_code: None },
 //!     Request { unicode: "ffi".chars().map(|c| c as u32).collect(), width: None, char_code: Some(0x86) },
@@ -55,6 +64,8 @@ use style::{Target, BOLD_THRESHOLD, BOLD_WEIGHT, DEFAULT_ITALIC_ANGLE, DEFAULT_W
 pub enum Error {
     InvalidData,
     UnsupportedCompression,
+    /// Not the name of a data file (see `data_file_names`).
+    UnknownDataFile,
 }
 
 impl fmt::Display for Error {
@@ -62,6 +73,7 @@ impl fmt::Display for Error {
         match self {
             Error::InvalidData => write!(f, "invalid glyph data"),
             Error::UnsupportedCompression => write!(f, "unsupported glyph data compression"),
+            Error::UnknownDataFile => write!(f, "unknown data file"),
         }
     }
 }
@@ -79,42 +91,138 @@ pub enum Family {
     Mono,
 }
 
-struct EmbeddedData {
-    bytes: &'static [u8],
+/// Embedded or runtime-provided bytes of a file in `data/`.
+struct DataFile {
+    name: &'static str,
+    #[cfg(feature = "embedded-data")]
+    embedded: &'static [u8],
+    #[cfg(not(feature = "embedded-data"))]
+    provided: OnceLock<&'static [u8]>,
+}
+
+impl DataFile {
+    #[cfg(feature = "embedded-data")]
+    fn bytes(&self) -> Option<&'static [u8]> {
+        Some(self.embedded)
+    }
+
+    #[cfg(not(feature = "embedded-data"))]
+    fn bytes(&self) -> Option<&'static [u8]> {
+        self.provided.get().copied()
+    }
+
+    fn needed(&self) -> &'static [u8] {
+        self.bytes()
+            .unwrap_or_else(|| panic!("The data file {} isn't provided.", self.name))
+    }
+}
+
+/// A data file with cached glyph data.
+struct GlyphDataFile {
+    file: DataFile,
     decoded: OnceLock<GlyphData>,
 }
 
-impl EmbeddedData {
-    const fn new(bytes: &'static [u8]) -> Self {
-        EmbeddedData {
-            bytes,
-            decoded: OnceLock::new(),
-        }
-    }
-
-    fn get(&self) -> &GlyphData {
-        self.decoded
-            .get_or_init(|| GlyphData::lazy(self.bytes).expect("Invalid embedded glyph data"))
+impl GlyphDataFile {
+    fn get(&'static self) -> &'static GlyphData {
+        self.decoded.get_or_init(|| {
+            GlyphData::lazy(self.file.needed()).expect("Invalid embedded glyph data")
+        })
     }
 }
 
+#[cfg(feature = "embedded-data")]
+macro_rules! data_file {
+    ($name:literal) => {
+        DataFile {
+            name: $name,
+            embedded: include_bytes!(concat!("../data/", $name)),
+        }
+    };
+}
+
+#[cfg(not(feature = "embedded-data"))]
+macro_rules! data_file {
+    ($name:literal) => {
+        DataFile {
+            name: $name,
+            provided: OnceLock::new(),
+        }
+    };
+}
+
+macro_rules! glyph_data_file {
+    ($name:literal) => {
+        GlyphDataFile {
+            file: data_file!($name),
+            decoded: OnceLock::new(),
+        }
+    };
+}
+
 // The glyph data of the styles of the families (see `style_glyph_data`).
-static FAMILIES: [EmbeddedData; 8] = [
-    EmbeddedData::new(include_bytes!("../data/Sans-Regular.hbgd")),
-    EmbeddedData::new(include_bytes!("../data/Sans-Bold.hbgd")),
-    EmbeddedData::new(include_bytes!("../data/Serif-Regular.hbgd")),
-    EmbeddedData::new(include_bytes!("../data/Serif-Bold.hbgd")),
-    EmbeddedData::new(include_bytes!("../data/Serif-Italic.hbgd")),
-    EmbeddedData::new(include_bytes!("../data/Serif-BoldItalic.hbgd")),
-    EmbeddedData::new(include_bytes!("../data/Mono-Regular.hbgd")),
-    EmbeddedData::new(include_bytes!("../data/Mono-Bold.hbgd")),
+static FAMILIES: [GlyphDataFile; 8] = [
+    glyph_data_file!("Sans-Regular.hbgd"),
+    glyph_data_file!("Sans-Bold.hbgd"),
+    glyph_data_file!("Serif-Regular.hbgd"),
+    glyph_data_file!("Serif-Bold.hbgd"),
+    glyph_data_file!("Serif-Italic.hbgd"),
+    glyph_data_file!("Serif-BoldItalic.hbgd"),
+    glyph_data_file!("Mono-Regular.hbgd"),
+    glyph_data_file!("Mono-Bold.hbgd"),
 ];
-static SYMBOLS: EmbeddedData = EmbeddedData::new(include_bytes!("../data/NotoSymbols.hbgd"));
-static SYMBOL: EmbeddedData = EmbeddedData::new(include_bytes!("../data/Symbol.hbgd"));
-static ZAPF_DINGBATS: EmbeddedData = EmbeddedData::new(include_bytes!("../data/ZapfDingbats.hbgd"));
-static WINGDINGS: EmbeddedData = EmbeddedData::new(include_bytes!("../data/Wingdings.hbgd"));
-static UNICODE: &[u8] = include_bytes!("../data/unicode.bin");
+static SYMBOLS: GlyphDataFile = glyph_data_file!("NotoSymbols.hbgd");
+static SYMBOL: GlyphDataFile = glyph_data_file!("Symbol.hbgd");
+static ZAPF_DINGBATS: GlyphDataFile = glyph_data_file!("ZapfDingbats.hbgd");
+static WINGDINGS: GlyphDataFile = glyph_data_file!("Wingdings.hbgd");
+static UNICODE: DataFile = data_file!("unicode.bin");
 static UNICODE_TABLES: OnceLock<unicode::UnicodeTables> = OnceLock::new();
+
+fn glyph_data_files() -> impl Iterator<Item = &'static GlyphDataFile> {
+    FAMILIES
+        .iter()
+        .chain([&SYMBOLS, &SYMBOL, &ZAPF_DINGBATS, &WINGDINGS])
+}
+
+/// Names of all glyph data files and the Unicode tables in `data/`.
+pub fn data_file_names() -> impl Iterator<Item = &'static str> {
+    glyph_data_files()
+        .map(|data| data.file.name)
+        .chain([UNICODE.name])
+}
+
+/// Whether a named file is embedded or has been provided with `set_data`.
+pub fn has_data(name: &str) -> bool {
+    glyph_data_files()
+        .map(|data| &data.file)
+        .chain([&UNICODE])
+        .any(|file| file.name == name && file.bytes().is_some())
+}
+
+/// Registers a file from `data_file_names` for the process lifetime.
+/// Call before generating fonts that need it (see `standard_font_data_files`
+/// and `font_data_files`). Repeated calls for a registered file are ignored.
+#[cfg(not(feature = "embedded-data"))]
+pub fn set_data(name: &str, bytes: Vec<u8>) -> Result<(), Error> {
+    if name == UNICODE.name {
+        if UNICODE.provided.get().is_none() {
+            let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+            let tables = unicode::UnicodeTables::new(bytes)?;
+            let _ = UNICODE_TABLES.set(tables);
+            let _ = UNICODE.provided.set(bytes);
+        }
+        return Ok(());
+    }
+    let data = glyph_data_files()
+        .find(|data| data.file.name == name)
+        .ok_or(Error::UnknownDataFile)?;
+    if data.file.provided.get().is_none() {
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let _ = data.decoded.set(GlyphData::lazy(bytes)?);
+        let _ = data.file.provided.set(bytes);
+    }
+    Ok(())
+}
 
 // The italic angle of the oblique standard fonts, and the one of Tinos Italic.
 const OBLIQUE_ANGLE: f64 = -12.0;
@@ -230,55 +338,112 @@ impl StandardFont {
     }
 }
 
-/// The embedded glyph data of the regular style of a family.
+/// The glyph data of the regular style of a family.
 pub fn glyph_data(family: Family) -> &'static GlyphData {
     style_glyph_data(family, false, false)
 }
 
-/// The embedded glyph data of a style of a family: the sans-serif and
-/// monospace families have no italic style (it's slanted from the upright
-/// one).
+/// The glyph data of a style of a family: the sans-serif and monospace
+/// families have no italic style (it's slanted from the upright one).
 pub fn style_glyph_data(family: Family, bold: bool, italic: bool) -> &'static GlyphData {
+    style_file(family, bold, italic).get()
+}
+
+fn style_file(family: Family, bold: bool, italic: bool) -> &'static GlyphDataFile {
     let index = match family {
         Family::Sans => usize::from(bold),
         Family::Serif => 2 + usize::from(bold) + 2 * usize::from(italic),
         Family::Mono => 6 + usize::from(bold),
     };
-    FAMILIES[index].get()
+    &FAMILIES[index]
 }
 
-/// The embedded glyph data with the symbols (arrows, math operators,
-/// dingbats...), used as a fallback for all the fonts.
+/// The glyph data with the symbols (arrows, math operators, dingbats...), used
+/// as a fallback for all the fonts.
 pub fn symbols_glyph_data() -> &'static GlyphData {
     SYMBOLS.get()
 }
 
-/// The embedded glyph data of a standard font: the one of a style of its
-/// family, or the one of Symbol, ZapfDingbats or Wingdings.
+/// The glyph data of a standard font: the one of a style of its family, or
+/// the one of Symbol, ZapfDingbats or Wingdings.
 pub fn standard_glyph_data(font: StandardFont) -> &'static GlyphData {
+    standard_file(font).0.get()
+}
+
+/// The glyph data file of a standard font, and its italic angle if it's
+/// italic (see `base_file`).
+fn standard_file(font: StandardFont) -> (&'static GlyphDataFile, Option<f64>) {
     match font.style() {
-        (Some(family), target) => base_glyph_data(family, &target).0,
-        _ if font == StandardFont::Symbol => SYMBOL.get(),
-        _ if font == StandardFont::ZapfDingbats => ZAPF_DINGBATS.get(),
-        _ => WINGDINGS.get(),
+        (Some(family), target) => base_file(family, &target),
+        _ if font == StandardFont::Symbol => (&SYMBOL, None),
+        _ if font == StandardFont::ZapfDingbats => (&ZAPF_DINGBATS, None),
+        _ => (&WINGDINGS, None),
     }
 }
 
-/// The embedded style of a family closest to a style: its glyph data, and its
+/// The style of a family closest to a style: its glyph data file, and its
 /// italic angle if it's italic.
-fn base_glyph_data(family: Family, target: &Target) -> (&'static GlyphData, Option<f64>) {
+fn base_file(family: Family, target: &Target) -> (&'static GlyphDataFile, Option<f64>) {
     let bold = target.weight >= BOLD_THRESHOLD;
     let italic = family == Family::Serif && target.italic_angle < 0.0;
     (
-        style_glyph_data(family, bold, italic),
+        style_file(family, bold, italic),
         italic.then_some(SERIF_ITALIC_ANGLE),
     )
 }
 
 fn unicode_tables() -> &'static unicode::UnicodeTables {
     UNICODE_TABLES.get_or_init(|| {
-        unicode::UnicodeTables::new(UNICODE).expect("Invalid embedded Unicode tables")
+        unicode::UnicodeTables::new(UNICODE.needed()).expect("Invalid embedded Unicode tables")
     })
+}
+
+/// Unique glyph data file names, followed by the Unicode tables.
+fn data_files_of(files: &[&'static GlyphDataFile]) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for name in files
+        .iter()
+        .map(|data| data.file.name)
+        .chain([UNICODE.name])
+    {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The data files needed to generate a standard font, or to find its missing
+/// glyphs (see `set_data`).
+pub fn standard_font_data_files(font: StandardFont) -> Vec<&'static str> {
+    let mut files = vec![standard_file(font).0];
+    files.extend(standard_fallbacks(font).iter().map(|fallback| fallback()));
+    data_files_of(&files)
+}
+
+/// The data files needed to generate a font of a family with some options,
+/// or to find its missing glyphs (see `set_data`).
+pub fn font_data_files(family: Family, options: &Options) -> Vec<&'static str> {
+    // Resolve the style without loading data to measure stem weight.
+    let options_without_stem = Options {
+        stem_v: None,
+        ..options.clone()
+    };
+    let target = target_of(family, &options_without_stem);
+    // missing_glyphs uses the regular style.
+    let mut files = vec![
+        base_file(family, &target).0,
+        style_file(family, false, false),
+        &SYMBOLS,
+    ];
+    if options.stem_v.is_some_and(|stem_v| stem_v > 0.0) {
+        let italic = family == Family::Serif && target.italic_angle < 0.0;
+        files.extend([
+            style_file(family, false, italic),
+            style_file(family, true, italic),
+        ]);
+    }
+    data_files_of(&files)
 }
 
 /// A generated font.
@@ -296,7 +461,7 @@ pub struct GeneratedFont {
 /// is incomplete. Glyph outlines remain lazily decoded.
 fn with_fallbacks(
     primary: &'static GlyphData,
-    fallbacks: &[fn() -> &'static GlyphData],
+    fallbacks: &[fn() -> &'static GlyphDataFile],
     texts: &[&[u32]],
 ) -> Vec<&'static GlyphData> {
     let mut sources = vec![primary];
@@ -307,21 +472,25 @@ fn with_fallbacks(
         .iter()
         .all(|text| text.is_empty() || !resolver.resolve(text).is_empty());
     if !complete {
-        sources.extend(fallbacks.iter().map(|fallback| fallback()));
+        sources.extend(fallbacks.iter().map(|fallback| fallback().get()));
     }
     sources
 }
 
 /// The fallbacks of a standard font: the symbols, and the glyphs of a family
 /// for Symbol, ZapfDingbats and Wingdings.
-fn standard_fallbacks(font: StandardFont) -> &'static [fn() -> &'static GlyphData] {
+fn standard_fallbacks(font: StandardFont) -> &'static [fn() -> &'static GlyphDataFile] {
     match font {
-        StandardFont::Symbol => &[|| glyph_data(Family::Serif), symbols_glyph_data],
+        StandardFont::Symbol => &[|| style_file(Family::Serif, false, false), symbols_file],
         StandardFont::ZapfDingbats | StandardFont::Wingdings => {
-            &[|| glyph_data(Family::Sans), symbols_glyph_data]
+            &[|| style_file(Family::Sans, false, false), symbols_file]
         }
-        _ => &[symbols_glyph_data],
+        _ => &[symbols_file],
     }
+}
+
+fn symbols_file() -> &'static GlyphDataFile {
+    &SYMBOLS
 }
 
 fn texts_of(glyphs: &[Request]) -> Vec<&[u32]> {
@@ -358,8 +527,9 @@ fn target_of(family: Family, options: &Options) -> Target {
 /// else from the symbols, the rest of the style being synthesized.
 pub fn generate_font(family: Family, glyphs: &[Request], options: &Options) -> GeneratedFont {
     let target = target_of(family, options);
-    let (base, base_italic_angle) = base_glyph_data(family, &target);
-    let sources = with_fallbacks(base, &[symbols_glyph_data], &texts_of(glyphs));
+    let (base, base_italic_angle) = base_file(family, &target);
+    let base = base.get();
+    let sources = with_fallbacks(base, &[symbols_file], &texts_of(glyphs));
     let units_per_em = base.units_per_em as f64;
     let cap_height = (options.cap_height)
         .filter(|&cap_height| cap_height > 0.0)
@@ -382,11 +552,8 @@ pub fn generate_standard_font(
     options: &Options,
 ) -> GeneratedFont {
     let (family, target) = font.style();
-    let (base, base_italic_angle) = match family {
-        Some(family) => base_glyph_data(family, &target),
-        None => (standard_glyph_data(font), None),
-    };
-    let sources = with_fallbacks(base, standard_fallbacks(font), &texts_of(glyphs));
+    let (base, base_italic_angle) = standard_file(font);
+    let sources = with_fallbacks(base.get(), standard_fallbacks(font), &texts_of(glyphs));
     let style = style::font_style(&sources, base_italic_angle, &target, None, family.is_some());
     let (data, missing) =
         font_builder::build_font(&sources, &style, unicode_tables(), glyphs, options);
@@ -397,7 +564,7 @@ pub fn generate_standard_font(
 /// its fallbacks.
 fn missing_texts(
     primary: &'static GlyphData,
-    fallbacks: &[fn() -> &'static GlyphData],
+    fallbacks: &[fn() -> &'static GlyphDataFile],
     texts: &[&[u32]],
 ) -> Vec<usize> {
     let sources = with_fallbacks(primary, fallbacks, texts);
@@ -419,7 +586,7 @@ pub fn missing_standard_glyphs(font: StandardFont, texts: &[&[u32]]) -> Vec<usiz
 /// Indices of the texts which can't be rendered with a family (and the
 /// symbols).
 pub fn missing_glyphs(family: Family, texts: &[&[u32]]) -> Vec<usize> {
-    missing_texts(glyph_data(family), &[symbols_glyph_data], texts)
+    missing_texts(glyph_data(family), &[symbols_file], texts)
 }
 
 #[cfg(test)]
@@ -428,7 +595,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_data_without_panicking() {
-        let bytes = SYMBOLS.bytes;
+        let bytes = include_bytes!("../data/NotoSymbols.hbgd");
         assert!(GlyphData::new(&bytes[..bytes.len() / 2]).is_err());
         assert!(GlyphData::new(&bytes[..10]).is_err());
         assert!(GlyphData::new(b"HBGD").is_err());
@@ -448,6 +615,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "embedded-data")]
     #[test]
     fn finds_the_missing_glyphs() {
         let a: &[u32] = &['A' as u32];

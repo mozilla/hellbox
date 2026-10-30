@@ -6,6 +6,8 @@
 //! by mappings, and head.checkSumAdjustment is ignored. This checks returned
 //! bytes, not OTS diagnostic messages.
 
+#![cfg(feature = "embedded-data")]
+
 use hellbox::{
     generate_font, generate_standard_font, glyph_data, standard_glyph_data, symbols_glyph_data,
     Family, GlyphData, Kerning, Options, Request, StandardFont,

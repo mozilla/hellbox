@@ -16,6 +16,8 @@
 //! UPDATE_REFS=1 cargo test --release --test reftest
 //! ```
 
+#![cfg(feature = "embedded-data")]
+
 use hellbox::{
     generate_font, generate_standard_font, glyph_data, standard_glyph_data, Family, GeneratedFont,
     Options, Request, StandardFont,

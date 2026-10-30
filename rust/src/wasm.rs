@@ -45,6 +45,69 @@ fn optional(value: f64) -> Option<f64> {
     (value.is_finite() && value != 0.0).then_some(value)
 }
 
+fn style_options(bold: bool, italic: bool, weight: f64, stem_v: f64, italic_angle: f64) -> Options {
+    Options {
+        bold,
+        italic,
+        weight: optional(weight),
+        stem_v: optional(stem_v),
+        italic_angle: optional(italic_angle),
+        ..Options::default()
+    }
+}
+
+/// Returns a JS error listing missing data files.
+fn check_data(files: Vec<&str>) -> Result<(), JsError> {
+    let missing: Vec<&str> = files
+        .into_iter()
+        .filter(|name| !crate::has_data(name))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(JsError::new(&format!(
+            "Missing data files: {}.",
+            missing.join(", ")
+        )))
+    }
+}
+
+/// Registers a data file for the module lifetime. Load the files listed by
+/// `standard_font_data_files` or `font_data_files` before generating a font.
+#[cfg(not(feature = "embedded-data"))]
+#[wasm_bindgen]
+pub fn set_data(name: &str, bytes: Vec<u8>) -> Result<(), JsError> {
+    crate::set_data(name, bytes).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Whether a named data file is embedded or registered.
+#[wasm_bindgen]
+pub fn has_data(name: &str) -> bool {
+    crate::has_data(name)
+}
+
+/// The data files needed by a standard font (see `generate_standard_font`).
+#[wasm_bindgen]
+pub fn standard_font_data_files(name: &str) -> Result<Vec<String>, JsError> {
+    let files = crate::standard_font_data_files(standard_font(name)?);
+    Ok(files.into_iter().map(String::from).collect())
+}
+
+/// Data files needed for the family and style passed to `generate_font`.
+#[wasm_bindgen]
+pub fn font_data_files(
+    family: u8,
+    bold: bool,
+    italic: bool,
+    weight: f64,
+    stem_v: f64,
+    italic_angle: f64,
+) -> Result<Vec<String>, JsError> {
+    let options = style_options(bold, italic, weight, stem_v, italic_angle);
+    let files = crate::font_data_files(self::family(family)?, &options);
+    Ok(files.into_iter().map(String::from).collect())
+}
+
 /// The requests of `generate_font` and `generate_standard_font`.
 fn requests(
     codepoints: &[u32],
@@ -150,19 +213,16 @@ pub fn generate_font(
     let glyphs = requests(codepoints, lengths, widths, char_codes)?;
     let kerning = self::kerning(kerning, glyphs.len())?;
     let options = Options {
-        bold,
-        italic,
-        weight: optional(weight),
-        stem_v: optional(stem_v),
-        italic_angle: optional(italic_angle),
         cap_height: optional(cap_height),
         metrics_only: metrics_only.unwrap_or(false),
         ascent,
         kerning,
         debug_boxes: debug_boxes.unwrap_or(false),
-        ..Options::default()
+        ..style_options(bold, italic, weight, stem_v, italic_angle)
     };
-    Ok(crate::generate_font(self::family(family)?, &glyphs, &options).data)
+    let family = self::family(family)?;
+    check_data(crate::font_data_files(family, &options))?;
+    Ok(crate::generate_font(family, &glyphs, &options).data)
 }
 
 /// The indices of the glyphs (same `codepoints` and `lengths` as for
@@ -174,7 +234,9 @@ pub fn missing_glyphs(
     family: u8,
 ) -> Result<Vec<u32>, JsError> {
     let texts = split_texts(codepoints, lengths)?;
-    Ok(crate::missing_glyphs(self::family(family)?, &texts)
+    let family = self::family(family)?;
+    check_data(crate::font_data_files(family, &Options::default()))?;
+    Ok(crate::missing_glyphs(family, &texts)
         .into_iter()
         .map(|i| i as u32)
         .collect())
@@ -198,6 +260,7 @@ pub fn generate_standard_font(
     debug_boxes: Option<bool>,
 ) -> Result<Vec<u8>, JsError> {
     let font = standard_font(name)?;
+    check_data(crate::standard_font_data_files(font))?;
     let glyphs = requests(codepoints, lengths, widths, char_codes)?;
     let kerning = self::kerning(kerning, glyphs.len())?;
     let options = Options {
@@ -219,6 +282,7 @@ pub fn missing_standard_glyphs(
     name: &str,
 ) -> Result<Vec<u32>, JsError> {
     let font = standard_font(name)?;
+    check_data(crate::standard_font_data_files(font))?;
     let texts = split_texts(codepoints, lengths)?;
     Ok(crate::missing_standard_glyphs(font, &texts)
         .into_iter()
@@ -230,7 +294,7 @@ pub fn missing_standard_glyphs(
 /// font with all its glyphs).
 #[wasm_bindgen]
 pub fn standard_font_codepoints(name: &str) -> Result<Vec<u32>, JsError> {
-    Ok(crate::standard_glyph_data(standard_font(name)?)
-        .codepoints()
-        .collect())
+    let font = standard_font(name)?;
+    check_data(crate::standard_font_data_files(font))?;
+    Ok(crate::standard_glyph_data(font).codepoints().collect())
 }

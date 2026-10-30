@@ -5,18 +5,31 @@
 
 # Builds the wasm module in the Docker image (see ../build.js). Writes
 # $OUTPUT/$OUTPUT_NAME.js and $OUTPUT/${OUTPUT_NAME}_bg.wasm; defaults below.
+# EMBEDDED_DATA=0 copies data files to $OUTPUT for runtime loading.
 set -e
 
 OUTPUT=${OUTPUT:=.}
 OUTPUT_NAME=${OUTPUT_NAME:=hellbox}
+EMBEDDED_DATA=${EMBEDDED_DATA:=1}
 
+FEATURES=
+if [ "${EMBEDDED_DATA}" = 0 ]; then
+  FEATURES="-- --no-default-features"
+fi
+
+# shellcheck disable=SC2086 # The features are separate arguments.
 wasm-pack build \
           --target web \
           --release \
           --no-typescript \
           --no-pack \
           --out-name "${OUTPUT_NAME}" \
-          --out-dir "${OUTPUT}"
+          --out-dir "${OUTPUT}" \
+          ${FEATURES}
+
+if [ "${EMBEDDED_DATA}" = 0 ]; then
+  cp data/*.hbgd data/unicode.bin "${OUTPUT}/"
+fi
 
 sed -i "1 i\/* THIS FILE IS GENERATED - DO NOT EDIT */" "${OUTPUT}/${OUTPUT_NAME}.js"
 # wasm-pack ignores everything in its output directory, which can be the one

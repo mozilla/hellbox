@@ -42,7 +42,7 @@ async function hasImage() {
   }
 }
 
-async function compile(output) {
+async function compile(output, embeddedData) {
   output = resolve(output);
   await fs.promises.mkdir(output, { recursive: true });
   if (!(await hasImage())) {
@@ -63,6 +63,8 @@ async function compile(output) {
     "CARGO_TARGET_DIR=/tmp/target",
     "-e",
     "OUTPUT=/out",
+    "-e",
+    `EMBEDDED_DATA=${embeddedData ? 1 : 0}`,
     "-v",
     `${CRATE}:/code`,
     "-v",
@@ -82,6 +84,9 @@ const USAGE = `Usage: node build.js [options]
   -c, --compile        Build the wasm module (hellbox.js and
                        hellbox_bg.wasm), creating the image if needed
   -o, --output <dir>   Output directory (default: build/wasm)
+  --no-embedded-data   Don't embed the data files in the module: they're
+                       written in the output directory, to provide at
+                       runtime (see \`set_data\` in rust/README.md)
   -h, --help           Show this help`;
 
 async function main() {
@@ -94,6 +99,7 @@ async function main() {
         short: "o",
         default: join(__dirname, "build", "wasm"),
       },
+      "no-embedded-data": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -105,7 +111,7 @@ async function main() {
     await create();
   }
   if (args.compile) {
-    await compile(args.output);
+    await compile(args.output, !args["no-embedded-data"]);
   }
 }
 

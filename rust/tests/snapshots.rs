@@ -14,6 +14,8 @@
 //!
 //! With `HELLBOX_OUTPUT=<dir>`, the fonts are written in `<dir>`.
 
+#![cfg(feature = "embedded-data")]
+
 use hellbox::{
     generate_font, generate_standard_font, standard_glyph_data, style_glyph_data,
     symbols_glyph_data, Family, GlyphData, Options, Request, StandardFont,
