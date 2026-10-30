@@ -384,12 +384,13 @@ impl Glyphs {
                         num_contours: sizes.len() as u32,
                         points: glyphs.xs.len() as u32,
                     };
+                    if x.iter().chain(&y).any(|&c| i16::try_from(c).is_err()) {
+                        return Err(Error::InvalidData);
+                    }
                     glyphs.contour_sizes.extend_from_slice(&sizes);
                     glyphs.on.extend_from_slice(&flags);
-                    for (&px, &py) in x.iter().zip(&y) {
-                        glyphs.xs.push(short(px as i64)?);
-                        glyphs.ys.push(short(py as i64)?);
-                    }
+                    glyphs.xs.extend(x.iter().map(|&c| c as i16));
+                    glyphs.ys.extend(y.iter().map(|&c| c as i16));
                     glyph
                 }
                 Shape::Composite(list) => {
