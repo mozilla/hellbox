@@ -32,7 +32,8 @@ encoder = ["dep:read-fonts", "dep:flate2", "dep:unicode-normalization"]
 
 [profile.release]
 lto = true
-opt-level = "s"
+# Faster in Firefox than "s" (13-18%), and as fast as 3 for half its size.
+opt-level = 2
 codegen-units = 1
 # skrifa draws the glyphs of the reference tests, fontsan builds OTS (a C++
 # compiler is needed), divan runs the benchmarks (benches/), through the
