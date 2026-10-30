@@ -7,6 +7,7 @@
 //!
 //! The probability of a bit being 1 is the average of two estimates adapting
 //! at different speeds, stored as 16 bits values; the coder uses 12 bits.
+//! Direct bits use no probability model.
 
 pub(crate) const TOP: u32 = 1 << 24;
 const HALF: u16 = 32768;
@@ -124,4 +125,21 @@ impl<'a> RangeDecoder<'a> {
         }
         bit
     }
+
+    /// Decodes up to `MAX_DIRECT_BITS` equiprobable bits.
+    #[inline]
+    pub fn decode_direct(&mut self, count: u32) -> u32 {
+        self.range >>= count;
+        let value = self.code / self.range;
+        self.code -= value * self.range;
+        while self.range < TOP {
+            self.range <<= 8;
+            self.code = (self.code << 8) | self.next();
+        }
+        // Mask excess bits from invalid input.
+        value & ((1 << count) - 1)
+    }
 }
+
+/// With range >= 2^24, shifting by at most 16 leaves range >= 2^8.
+pub(crate) const MAX_DIRECT_BITS: u32 = 16;

@@ -166,7 +166,9 @@ are:
   first decisions of a context. Integers are binarized with an adaptive Elias
   gamma code (with a binary tree for the first mantissa bits), whose length is
   coded with a binary tree for the long values (the magnitudes of the deltas,
-  the ranks and the advances).
+  the ranks and the advances). For new-contour delta magnitudes, only the
+  first mantissa bit is modeled. The remaining mantissa bits are coded as
+  equiprobable values, without adaptive models.
 - **Header, strings and cmap** are coded with simple byte and integer models.
 - **Glyphs** are coded in order: type, outline or components, then the advance
   (same as the previous glyph, or predicted from the bounding box of the
