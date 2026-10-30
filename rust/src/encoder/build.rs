@@ -7,7 +7,8 @@
 //! A codepoint is taken from the first font having it (and having it in its
 //! ranges). Only the glyphs reachable from the cmap are kept (plus the
 //! components they use), without any hinting, glyph names or layout tables.
-//! The stems are measured, to embolden the outlines at runtime.
+//! The stems are measured, to embolden the outlines at runtime. With the
+//! metrics of a font (see `Metrics`), the glyphs are moved onto its boxes.
 
 use super::font::{self, Point, SourceComponent, SourceFont, SourceGlyph};
 use super::search::EncoderOptions;
@@ -68,6 +69,23 @@ impl FontSpec {
     }
 }
 
+/// AFM widths and target boxes for named glyphs, in 1/1000 em.
+#[derive(Clone, Debug)]
+pub struct Metrics {
+    pub path: PathBuf,
+    /// The codepoints and their glyph names in the file.
+    pub names: Vec<(u32, String)>,
+    /// The glyphs moved exactly onto their box (scaled separately on each
+    /// axis): the pieces which must join (e.g. those of the big delimiters).
+    /// The other ones keep their proportions: scaled to the height of their
+    /// box, unless they would then be wider than it and than their width,
+    /// fitting in these instead and centered vertically (those on the baseline
+    /// staying on it). They're centered horizontally on their box.
+    pub exact: Vec<String>,
+    /// (Output codepoint, source codepoint) overrides, applied before fitting.
+    pub glyphs_of: Vec<(u32, u32)>,
+}
+
 /// The options of a build (see also the `build_glyph_data` tool).
 #[derive(Clone, Debug)]
 pub struct BuildOptions {
@@ -91,6 +109,7 @@ pub struct BuildOptions {
     /// a decoder needing only them can stop after them (e.g. the characters
     /// of the common 8-bit encodings).
     pub front: Vec<u32>,
+    pub metrics: Option<Metrics>,
     pub stems: Stems,
     pub codec: Codec,
     pub encoder: EncoderOptions,
@@ -113,6 +132,7 @@ impl BuildOptions {
             fixed_pitch: None,
             exclude_covered_by: Vec::new(),
             front: Vec::new(),
+            metrics: None,
             stems: Stems::Latin,
             codec: Codec::Model,
             encoder: EncoderOptions::default(),
@@ -376,6 +396,122 @@ fn source_metrics(font: &SourceFont) -> Result<(f64, f64), String> {
     Ok((x_height, cap_height))
 }
 
+/// The widths and bounding boxes (in 1/1000 em) of the glyphs of an AFM
+/// file, by name.
+fn read_afm(path: &Path) -> Result<HashMap<String, (f64, [f64; 4])>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(parse_afm(&String::from_utf8_lossy(&bytes)))
+}
+
+fn parse_afm(text: &str) -> HashMap<String, (f64, [f64; 4])> {
+    let mut glyphs = HashMap::new();
+    // The character metrics: "C 229 ; WX 713 ; N summation ; B 14 -108 695 752 ;".
+    for line in text.lines() {
+        let (mut width, mut name, mut bbox) = (None, None, None);
+        for field in line.split(';') {
+            let mut values = field.split_whitespace();
+            match values.next() {
+                Some("WX") => width = values.next().and_then(|v| v.parse().ok()),
+                Some("N") => name = values.next(),
+                Some("B") => {
+                    let v: Vec<f64> = values.filter_map(|v| v.parse().ok()).collect();
+                    bbox = <[f64; 4]>::try_from(v).ok();
+                }
+                _ => {}
+            }
+        }
+        if let (Some(width), Some(name), Some(bbox)) = (width, name, bbox) {
+            glyphs.insert(name.to_string(), (width, bbox));
+        }
+    }
+    glyphs
+}
+
+/// The bounding box of contours: the extrema of their quadratic curves, not
+/// of their control points (None without points).
+fn bounding_box(contours: &[Vec<Point>]) -> Option<[f64; 4]> {
+    let mut x = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut y = x;
+    let add = |extent: &mut (f64, f64), v: f64| *extent = (extent.0.min(v), extent.1.max(v));
+    for contour in contours {
+        let n = contour.len();
+        for (i, p) in contour.iter().enumerate() {
+            if p.on {
+                add(&mut x, p.x);
+                add(&mut y, p.y);
+                continue;
+            }
+            // The curve of an off-curve point, between the on-curve points
+            // around it (implied in the middle of two off-curve points): its
+            // ends, and its extremum on each axis, if any.
+            let end = |q: &Point| {
+                if q.on {
+                    (q.x, q.y)
+                } else {
+                    ((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+                }
+            };
+            let (start, stop) = (end(&contour[(i + n - 1) % n]), end(&contour[(i + 1) % n]));
+            for (extent, a, c, b) in [
+                (&mut x, start.0, p.x, stop.0),
+                (&mut y, start.1, p.y, stop.1),
+            ] {
+                add(extent, a);
+                add(extent, b);
+                let t = (a - c) / (a - 2.0 * c + b);
+                if t > 0.0 && t < 1.0 {
+                    add(
+                        extent,
+                        (1.0 - t) * (1.0 - t) * a + 2.0 * t * (1.0 - t) * c + t * t * b,
+                    );
+                }
+            }
+        }
+    }
+    (x.0 <= x.1).then_some([x.0, y.0, x.1, y.1])
+}
+
+/// Moves contours onto a box, for a glyph of a given width (see `Metrics`):
+/// exactly, or keeping their proportions. `baseline` is the distance from the
+/// baseline up to which a glyph is on it. The coordinates are rounded.
+fn place_in_box(
+    contours: &[Vec<Point>],
+    target: [f64; 4],
+    width: f64,
+    exact: bool,
+    baseline: f64,
+) -> Vec<Vec<Point>> {
+    let Some(bbox) = bounding_box(contours) else {
+        return Vec::new();
+    };
+    let scale = |to: f64, from: f64| if from > 0.0 { to / from } else { 1.0 };
+    let (target_width, target_height) = (target[2] - target[0], target[3] - target[1]);
+    let mut sx = scale(target_width, bbox[2] - bbox[0]);
+    let mut sy = scale(target_height, bbox[3] - bbox[1]);
+    let center = |b: [f64; 4]| ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+    let ((cx, mut cy), (tx, mut ty)) = (center(bbox), center(target));
+    if !exact {
+        let s = sy.min(scale(target_width.max(width), bbox[2] - bbox[0]));
+        if s < sy && bbox[1].abs() <= baseline && target[1].abs() <= baseline {
+            (cy, ty) = (bbox[1], target[1]);
+        }
+        (sx, sy) = (s, s);
+    }
+    contours
+        .iter()
+        .map(|contour| {
+            contour
+                .iter()
+                .map(|p| Point {
+                    x: f64::round(tx + (p.x - cx) * sx),
+                    y: f64::round(ty + (p.y - cy) * sy),
+                    on: p.on,
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Hash integer coordinates and flags, with contour separators.
 fn hash_contours(contours: &[Vec<Point>]) -> u32 {
     let mut h = 0x811c_9dc5u32;
@@ -414,8 +550,69 @@ struct Built {
     cmap: HashMap<u32, Key>,
 }
 
+/// Replaces named cmap entries with fitted outlines in primary-font units.
+/// Returns their synthetic source font; `origins` records each source font.
+fn synthesize(
+    fonts: &[Font],
+    cmap: &mut HashMap<u32, Key>,
+    metrics: &Metrics,
+    origins: &mut Vec<usize>,
+) -> Result<SourceFont, String> {
+    let afm = read_afm(&metrics.path)?;
+    let units_per_em = fonts[0].source.units_per_em;
+    let em = units_per_em as f64 / 1000.0;
+    let mut font = SourceFont {
+        units_per_em,
+        ..SourceFont::default()
+    };
+    let sources = cmap.clone();
+    for (cp, name) in &metrics.names {
+        let &(width, bbox) = afm
+            .get(name)
+            .ok_or_else(|| format!("{}: no glyph {name}.", metrics.path.display()))?;
+        let from = metrics
+            .glyphs_of
+            .iter()
+            .find(|&&(c, _)| c == *cp)
+            .map_or(*cp, |&(_, from)| from);
+        let Some(&key) = sources.get(&from) else {
+            continue;
+        };
+        let source = &fonts[key.font].source;
+        let scale = units_per_em as f64 / source.units_per_em as f64;
+        let mut contours = source_outline(source, key.gid, 0)?;
+        for p in contours.iter_mut().flatten() {
+            (p.x, p.y) = (p.x * scale, p.y * scale);
+        }
+        let exact = metrics.exact.contains(name);
+        // Treat source and target bottoms within 40/1000 em as baseline-aligned.
+        let contours = place_in_box(
+            &contours,
+            bbox.map(|v| v * em),
+            width * em,
+            exact,
+            40.0 * em,
+        );
+        cmap.insert(
+            *cp,
+            Key {
+                font: fonts.len(),
+                gid: font.glyphs.len() as u32,
+            },
+        );
+        font.glyphs.push(if contours.is_empty() {
+            SourceGlyph::Empty
+        } else {
+            SourceGlyph::Simple(contours)
+        });
+        font.advances.push(f64::round(width * em) as u16);
+        origins.push(key.font);
+    }
+    Ok(font)
+}
+
 fn build(options: &BuildOptions) -> Result<Built, String> {
-    let fonts = std::iter::once(&options.font)
+    let mut fonts = std::iter::once(&options.font)
         .chain(&options.fallback)
         .map(|spec| {
             Ok(Font {
@@ -424,14 +621,11 @@ fn build(options: &BuildOptions) -> Result<Built, String> {
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let primary = &fonts[0].source;
-    let units_per_em = primary.units_per_em;
+    let units_per_em = fonts[0].source.units_per_em;
     let grid = options.grid;
     if grid == 0 {
         return Err("The grid must be in [1, 255].".to_string());
     }
-    let glyph = |key: Key| &fonts[key.font].source.glyphs[key.gid as usize];
-    let scale_of = |key: Key| units_per_em as f64 / fonts[key.font].source.units_per_em as f64;
 
     // Collect the codepoints: the first font mapping a codepoint wins.
     let mut cmap: HashMap<u32, Key> = HashMap::new();
@@ -456,6 +650,28 @@ fn build(options: &BuildOptions) -> Result<Built, String> {
             .collect::<Result<Vec<_>, _>>()?;
         cmap.retain(|cp, _| !covering.iter().all(|f| f.cmap_index.contains_key(cp)));
     }
+    // The glyphs moved onto the boxes of the metrics, in an additional font.
+    let synthesized = fonts.len();
+    let mut origins = Vec::new();
+    if let Some(metrics) = &options.metrics {
+        let source = synthesize(&fonts, &mut cmap, metrics, &mut origins)?;
+        fonts.push(Font {
+            source,
+            ranges: None,
+        });
+    }
+    let primary = &fonts[0].source;
+    let glyph = |key: Key| &fonts[key.font].source.glyphs[key.gid as usize];
+    let scale_of = |key: Key| units_per_em as f64 / fonts[key.font].source.units_per_em as f64;
+    // The font a glyph comes from (the one of a moved glyph is the source of
+    // its outline).
+    let origin = |key: Key| {
+        if key.font == synthesized {
+            origins[key.gid as usize]
+        } else {
+            key.font
+        }
+    };
     let mut codepoints: Vec<u32> = cmap.keys().copied().collect();
     codepoints.sort_unstable();
 
@@ -690,7 +906,7 @@ fn build(options: &BuildOptions) -> Result<Built, String> {
     }
 
     // The copyright notices of all the fonts providing glyphs must be kept.
-    let used: HashSet<usize> = order.iter().map(|&key| key.font).collect();
+    let used: HashSet<usize> = order.iter().map(|&key| origin(key)).collect();
     let unique = |name_id: u16| {
         let mut values: Vec<&str> = Vec::new();
         for (index, font) in fonts.iter().enumerate() {
@@ -892,6 +1108,76 @@ mod tests {
         assert!(parse_ranges(Some("20-10")).is_err());
         assert!(parse_ranges(Some("1,,2")).is_err());
         assert!(parse_ranges(Some("41-42-43")).is_err());
+    }
+
+    #[test]
+    fn reads_the_afm_metrics() {
+        let afm = "FontName Symbol\nC 229 ; WX 713 ; N summation ; B 14 -108 695 752 ;\n\
+                   C 32 ; WX 250 ; N space ; B 0 0 0 0 ;\nEndCharMetrics\n";
+        let glyphs = parse_afm(afm);
+        assert_eq!(glyphs.len(), 2);
+        assert_eq!(glyphs["summation"], (713.0, [14.0, -108.0, 695.0, 752.0]));
+    }
+
+    fn point(x: f64, y: f64, on: bool) -> Point {
+        Point { x, y, on }
+    }
+
+    #[test]
+    fn bounds_the_curves() {
+        // The control point is at y = 100, but the curve reaches only y = 50.
+        let arc = vec![
+            point(0.0, 0.0, true),
+            point(50.0, 100.0, false),
+            point(100.0, 0.0, true),
+        ];
+        assert_eq!(bounding_box(&[arc]), Some([0.0, 0.0, 100.0, 50.0]));
+        // Two off-curve points: the on-curve point implied between them.
+        let arch = vec![
+            point(0.0, 0.0, true),
+            point(0.0, 100.0, false),
+            point(100.0, 100.0, false),
+            point(100.0, 0.0, true),
+        ];
+        assert_eq!(bounding_box(&[arch]), Some([0.0, 0.0, 100.0, 100.0]));
+        assert_eq!(bounding_box(&[]), None);
+    }
+
+    #[test]
+    fn places_the_glyphs_in_their_boxes() {
+        let (x, y) = (100.0, 60.0);
+        let rectangle = vec![vec![
+            point(0.0, 0.0, true),
+            point(x, 0.0, true),
+            point(x, y, true),
+            point(0.0, y, true),
+        ]];
+        let place = |target, width, exact| {
+            bounding_box(&place_in_box(&rectangle, target, width, exact, 40.0))
+        };
+        // Exactly.
+        let target = [10.0, -20.0, 30.0, 220.0];
+        assert_eq!(place(target, 100.0, true), Some(target));
+        // The height of the box, centered horizontally.
+        assert_eq!(
+            place([0.0, -50.0, 300.0, 70.0], 300.0, false),
+            Some([50.0, -50.0, 250.0, 70.0])
+        );
+        // Too wide: fitting in the box (wider than the width), here on the
+        // baseline, or in the width (wider than the box), centered vertically.
+        assert_eq!(
+            place([0.0, 0.0, 150.0, 120.0], 100.0, false),
+            Some([0.0, 0.0, 150.0, 90.0])
+        );
+        assert_eq!(
+            place([0.0, 100.0, 40.0, 300.0], 50.0, false),
+            Some([-5.0, 185.0, 45.0, 215.0])
+        );
+        // Slightly below the baseline (an overshoot), staying there.
+        assert_eq!(
+            place([0.0, -10.0, 50.0, 300.0], 40.0, false),
+            Some([0.0, -10.0, 50.0, 20.0])
+        );
     }
 
     #[test]
