@@ -118,7 +118,7 @@ node build.js --compile --output my_output_dir
 
 It builds a Docker image with the toolchain (Rust, the wasm target and
 wasm-pack, see `Dockerfile`) if it doesn't exist yet, then generates
-`hellbox.js` and `hellbox_bg.wasm` (880 KB) in the output directory
+`hellbox.js` and `hellbox_bg.wasm` (884 KB) in the output directory
 (`build/wasm` by default). After a change of the `Dockerfile` (e.g. to update
 the toolchain), `--create` builds the image again: `node build.js -Cco
 my_output_dir` does both. With a local toolchain: `OUTPUT=<dir> ./compile.sh`.
