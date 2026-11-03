@@ -26,22 +26,6 @@ fn provide(names: &[&str]) {
 /// Primary, fallback and missing glyphs, including a sequence.
 const TEXTS: [&str; 7] = ["A", "ffi", "é", "α", "∑", "★", "一"];
 
-fn requests() -> Vec<Request> {
-    (TEXTS.iter())
-        .map(|text| Request {
-            unicode: text.chars().map(u32::from).collect(),
-            ..Request::default()
-        })
-        .collect()
-}
-
-fn texts() -> Vec<Vec<u32>> {
-    TEXTS
-        .iter()
-        .map(|t| t.chars().map(u32::from).collect())
-        .collect()
-}
-
 fn family_case(case: &str) -> Option<(Family, Options)> {
     let (family, style) = case.split_once(':')?;
     let family = match family {
@@ -83,18 +67,27 @@ fn runs_a_case() {
     let Ok(case) = std::env::var(CASE) else {
         return;
     };
-    let texts = texts();
-    let texts: Vec<&[u32]> = texts.iter().map(Vec::as_slice).collect();
+    let requests: Vec<Request> = TEXTS
+        .iter()
+        .map(|text| Request {
+            unicode: text.chars().map(u32::from).collect(),
+            ..Request::default()
+        })
+        .collect();
+    let texts: Vec<&[u32]> = requests
+        .iter()
+        .map(|request| request.unicode.as_slice())
+        .collect();
     if let Some(font) = StandardFont::from_name(&case) {
         provide(&standard_font_data_files(font));
-        let generated = generate_standard_font(font, &requests(), &Options::default());
+        let generated = generate_standard_font(font, &requests, &Options::default());
         assert!(!generated.data.is_empty());
         missing_standard_glyphs(font, &texts);
         assert!(standard_glyph_data(font).codepoints().count() > 0);
     } else {
         let (family, options) = family_case(&case).unwrap();
         provide(&font_data_files(family, &options));
-        let generated = generate_font(family, &requests(), &options);
+        let generated = generate_font(family, &requests, &options);
         assert!(!generated.data.is_empty());
         missing_glyphs(family, &texts);
     }
@@ -103,8 +96,9 @@ fn runs_a_case() {
 #[test]
 fn provides_the_files_of_each_font() {
     let mut cases: Vec<String> = StandardFont::ALL
+        .into_iter()
         .map(|font| font.name().to_string())
-        .to_vec();
+        .collect();
     for family in ["sans", "serif", "mono"] {
         cases.extend(STYLES.map(|style| format!("{family}:{style}")));
     }

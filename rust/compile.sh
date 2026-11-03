@@ -17,9 +17,9 @@ OUTPUT_NAME=${OUTPUT_NAME:=hellbox}
 EMBEDDED_DATA=${EMBEDDED_DATA:=1}
 JS_FALLBACK=${JS_FALLBACK:=0}
 
-FEATURES=
+set --
 if [ "${EMBEDDED_DATA}" = 0 ]; then
-  FEATURES="-- --no-default-features"
+  set -- -- --no-default-features
 fi
 
 if [ "${JS_FALLBACK}" = 1 ]; then
@@ -35,7 +35,6 @@ if [ "${JS_FALLBACK}" = 1 ]; then
   export RUSTFLAGS
 fi
 
-# shellcheck disable=SC2086 # The features are separate arguments.
 wasm-pack build \
           --target web \
           --release \
@@ -43,7 +42,7 @@ wasm-pack build \
           --no-pack \
           --out-name "${OUTPUT_NAME}" \
           --out-dir "${OUTPUT}" \
-          ${FEATURES}
+          "$@"
 
 if [ "${EMBEDDED_DATA}" = 0 ]; then
   cp data/*.hbgd data/unicode.bin "${OUTPUT}/"

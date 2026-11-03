@@ -122,16 +122,8 @@ fn bounds(contours: &Contours) -> Bounds {
     }
 }
 
-/// The abscissas where the outline crosses the horizontal line at y, sorted
-/// (the curves being flattened).
-fn crossings(contours: &Contours, y: f64) -> Vec<f64> {
-    let mut xs = Vec::new();
-    let mut segment = |(x0, y0): (f64, f64), (x1, y1): (f64, f64)| {
-        let (a, b) = (y0 - y, y1 - y);
-        if (a < 0.0) != (b < 0.0) {
-            xs.push(x0 + (x1 - x0) * a / (a - b));
-        }
-    };
+/// Visits the line segments of an outline, sampling each quadratic curve.
+fn segments(contours: &Contours, steps: usize, mut segment: impl FnMut((f64, f64), (f64, f64))) {
     for contour in contours {
         // The on-curve points implied between the off-curve ones.
         let mut points = Vec::new();
@@ -163,8 +155,8 @@ fn crossings(contours: &Contours, y: f64) -> Vec<f64> {
             }
             let end = points[i + 1];
             let mut last = prev;
-            for step in 1..=32 {
-                let t = step as f64 / 32.0;
+            for step in 1..=steps {
+                let t = step as f64 / steps as f64;
                 let u = 1.0 - t;
                 let q = (
                     u * u * prev.0 + 2.0 * u * t * p.x + t * t * end.x,
@@ -177,6 +169,17 @@ fn crossings(contours: &Contours, y: f64) -> Vec<f64> {
             i += 2;
         }
     }
+}
+
+/// The abscissas where the flattened outline crosses the horizontal line at y.
+fn crossings(contours: &Contours, y: f64) -> Vec<f64> {
+    let mut xs = Vec::new();
+    segments(contours, 32, |(x0, y0), (x1, y1)| {
+        let (a, b) = (y0 - y, y1 - y);
+        if (a < 0.0) != (b < 0.0) {
+            xs.push(x0 + (x1 - x0) * a / (a - b));
+        }
+    });
     xs.sort_by(f64::total_cmp);
     xs
 }
@@ -894,35 +897,16 @@ fn outline_bounds(contours: &Contours) -> [f64; 4] {
         f64::NEG_INFINITY,
         f64::NEG_INFINITY,
     ];
-    let mut add = |x: f64, y: f64| b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
-    for contour in contours {
-        let n = contour.len();
-        for (i, &p) in contour.iter().enumerate() {
-            if p.on {
-                add(p.x, p.y);
-                continue;
-            }
-            // The curve of an off-curve point (flattened), between the
-            // on-curve points around it (implied between two off-curve ones).
-            let end = |q: Point| {
-                if q.on {
-                    (q.x, q.y)
-                } else {
-                    ((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
-                }
-            };
-            let (a, c) = (end(contour[(i + n - 1) % n]), end(contour[(i + 1) % n]));
-            for step in 0..=64 {
-                let t = step as f64 / 64.0;
-                let u = 1.0 - t;
-                add(
-                    u * u * a.0 + 2.0 * u * t * p.x + t * t * c.0,
-                    u * u * a.1 + 2.0 * u * t * p.y + t * t * c.1,
-                );
-            }
+    segments(contours, 64, |a, c| {
+        for (x, y) in [a, c] {
+            b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
         }
-    }
+    });
     b
+}
+
+fn near(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 2.0
 }
 
 /// Generates a standard font with the supplied widths in 1/1000 em.
@@ -1038,7 +1022,6 @@ fn puts_the_glyphs_of_symbol_and_zapfdingbats_on_the_boxes_of_adobe() {
         let (generated, units) = font_with_widths(font, &[(c, width)]);
         let [x_min, y_min, x_max, y_max] = outline_bounds(&generated.glyphs[1]);
         let expected = afm_box.map(|v| v * units);
-        let near = |a: f64, b: f64| (a - b).abs() <= 2.0;
         let message = format!("{c} {:?}", [x_min, y_min, x_max, y_max].map(|v| v / units));
         let matches_box = match on_box {
             Exactly => {
@@ -1135,7 +1118,6 @@ fn joins_the_pieces_of_the_big_delimiters_of_symbol() {
         pieces.extend(bottoms.iter().map(|&(c, b)| (c, b, false, true)));
         let glyphs: Vec<(char, f64)> = pieces.iter().map(|&(c, ..)| (c, width)).collect();
         let (generated, units) = font_with_widths(StandardFont::Symbol, &glyphs);
-        let near = |a: f64, b: f64| (a - b).abs() <= 2.0;
         for (i, &(c, afm_box, at_bottom, at_top)) in pieces.iter().enumerate() {
             let contours = &generated.glyphs[i + 1];
             let [_, y_min, _, y_max] = outline_bounds(contours);

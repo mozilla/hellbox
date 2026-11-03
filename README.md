@@ -52,13 +52,11 @@ PDF: [Arimo](https://github.com/googlefonts/arimo) and
 [Liberation Mono](https://github.com/liberationfonts/liberation-fonts) 2.1.5
 for Courier (New): 96-98% of the widths of the AFM files of Helvetica and Times
 are the same, and all the ones of Courier. The symbols come from some unhinted
-[Noto](https://notofonts.github.io/) fonts. The glyphs of Symbol and
-ZapfDingbats are moved onto the bounding boxes of the AFM files of these fonts
-(the Core 14 AFM files of Adobe), with their widths, where the PDF files using
-them expect them: the pieces of the big delimiters and integrals exactly
-vertically, their stems on the ones of their extensions horizontally (to join
-them), the extensions of the arrows, the radical and its extension exactly,
-the other glyphs keeping their proportions.
+[Noto](https://notofonts.github.io/) fonts. Symbol and ZapfDingbats use
+Adobe's AFM widths and bounding boxes.
+Delimiter and integral pieces fit vertically to their boxes and align their
+stems with their extensions. Arrow extensions, the radical and its extension
+fit on both axes; other glyphs keep their proportions.
 
 | File                    | Size    | Codepoints | Content                                                  |
 | ----------------------- | ------- | ---------- | -------------------------------------------------------- |

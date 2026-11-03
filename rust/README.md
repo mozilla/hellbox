@@ -2,9 +2,8 @@
 
 A Rust library (compiled to wasm for pdf.js) which generates TrueType fonts
 with exactly the requested glyphs, to replace the fonts which aren't embedded
-in PDF files. The glyph data (see `../FORMAT.md`) is embedded in the library
-or provided at runtime without the `embedded-data` feature
-(see below):
+in PDF files. Glyph data (see `../FORMAT.md`) is embedded by default,
+or provided at runtime without the `embedded-data` feature:
 
 - three families (see `Family`), from Arimo and Tinos, which have the metrics
   of Helvetica and Times, and Liberation Mono, which has the ones of Courier:
@@ -71,8 +70,7 @@ module (the functions throw an error, "Missing data files: ...", without
 them):
 
 ```js
-// E.g. ["Sans-Bold.hbgd", "NotoSymbols.hbgd", "unicode.bin"]: its style, the
-// fallbacks and the Unicode tables.
+// Load the style, fallbacks and Unicode tables.
 for (const file of standard_font_data_files("Helvetica-Bold")) {
   if (!has_data(file)) {
     set_data(file, fetchSync(`${dataUrl}${file}`)); // Uint8Array
@@ -222,8 +220,7 @@ bigger ones (e.g. CJK) by a few bytes. The model rounds ties towards
 
 ```sh
 cargo test --release
-# The data files provided at runtime (tests/data_files.rs: the files listed
-# for each font are the ones it needs, each in a process of its own).
+# Runtime data loading (tests/data_files.rs).
 cargo test --release --no-default-features
 ```
 

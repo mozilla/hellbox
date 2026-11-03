@@ -7,6 +7,7 @@
 //
 // Usage: node tools/check_js_fallback.mjs <dir>
 
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,14 +30,11 @@ const provide = (glue, files) => {
 };
 const ones = n => new Uint32Array(n).fill(1);
 const none = new Uint32Array(0);
-const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-
-let failures = 0;
 const check = (label, run) => {
   const [a, b] = [run(wasm), run(js)];
-  const ok = a.length > 0 && same(a, b);
-  failures += !ok;
-  console.log(`${ok ? "ok" : "MISMATCH"}: ${label} (${b.length})`);
+  assert.ok(a.length > 0, `${label}: empty result`);
+  assert.deepEqual(b, a, label);
+  console.log(`ok: ${label} (${b.length})`);
 };
 
 // All primary-source codepoints of selected standard fonts, with custom widths.
@@ -58,7 +56,3 @@ check("serif, weight 900, slanted", glue =>
   glue.generate_font(text, ones(text.length), new Float64Array(0), none, ...style, NaN)
 );
 check("missing glyphs", glue => glue.missing_glyphs(text, ones(text.length), 1));
-
-if (failures > 0) {
-  process.exitCode = 1;
-}

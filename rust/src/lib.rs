@@ -131,21 +131,13 @@ impl GlyphDataFile {
     }
 }
 
-#[cfg(feature = "embedded-data")]
 macro_rules! data_file {
     ($name:literal) => {
         DataFile {
             name: $name,
+            #[cfg(feature = "embedded-data")]
             embedded: include_bytes!(concat!("../data/", $name)),
-        }
-    };
-}
-
-#[cfg(not(feature = "embedded-data"))]
-macro_rules! data_file {
-    ($name:literal) => {
-        DataFile {
-            name: $name,
+            #[cfg(not(feature = "embedded-data"))]
             provided: OnceLock::new(),
         }
     };
@@ -184,19 +176,18 @@ fn glyph_data_files() -> impl Iterator<Item = &'static GlyphDataFile> {
         .chain([&SYMBOLS, &SYMBOL, &ZAPF_DINGBATS, &WINGDINGS])
 }
 
+fn data_files() -> impl Iterator<Item = &'static DataFile> {
+    glyph_data_files().map(|data| &data.file).chain([&UNICODE])
+}
+
 /// Names of all glyph data files and the Unicode tables in `data/`.
 pub fn data_file_names() -> impl Iterator<Item = &'static str> {
-    glyph_data_files()
-        .map(|data| data.file.name)
-        .chain([UNICODE.name])
+    data_files().map(|file| file.name)
 }
 
 /// Whether a named file is embedded or has been provided with `set_data`.
 pub fn has_data(name: &str) -> bool {
-    glyph_data_files()
-        .map(|data| &data.file)
-        .chain([&UNICODE])
-        .any(|file| file.name == name && file.bytes().is_some())
+    data_files().any(|file| file.name == name && file.bytes().is_some())
 }
 
 /// Registers a file from `data_file_names` for the process lifetime.
@@ -399,10 +390,10 @@ fn unicode_tables() -> &'static unicode::UnicodeTables {
 }
 
 /// Unique glyph data file names, followed by the Unicode tables.
-fn data_files_of(files: &[&'static GlyphDataFile]) -> Vec<&'static str> {
+fn data_files_of(files: impl IntoIterator<Item = &'static GlyphDataFile>) -> Vec<&'static str> {
     let mut names: Vec<&'static str> = Vec::new();
     for name in files
-        .iter()
+        .into_iter()
         .map(|data| data.file.name)
         .chain([UNICODE.name])
     {
@@ -416,9 +407,7 @@ fn data_files_of(files: &[&'static GlyphDataFile]) -> Vec<&'static str> {
 /// The data files needed to generate a standard font, or to find its missing
 /// glyphs (see `set_data`).
 pub fn standard_font_data_files(font: StandardFont) -> Vec<&'static str> {
-    let mut files = vec![standard_file(font).0];
-    files.extend(standard_fallbacks(font).iter().map(|fallback| fallback()));
-    data_files_of(&files)
+    data_files_of(std::iter::once(standard_file(font).0).chain(standard_fallbacks(font)))
 }
 
 /// The data files needed to generate a font of a family with some options,
@@ -443,7 +432,7 @@ pub fn font_data_files(family: Family, options: &Options) -> Vec<&'static str> {
             style_file(family, true, italic),
         ]);
     }
-    data_files_of(&files)
+    data_files_of(files)
 }
 
 /// A generated font.
@@ -461,7 +450,7 @@ pub struct GeneratedFont {
 /// is incomplete. Glyph outlines remain lazily decoded.
 fn with_fallbacks(
     primary: &'static GlyphData,
-    fallbacks: &[fn() -> &'static GlyphDataFile],
+    fallbacks: impl IntoIterator<Item = &'static GlyphDataFile>,
     texts: &[&[u32]],
 ) -> Vec<&'static GlyphData> {
     let mut sources = vec![primary];
@@ -472,25 +461,23 @@ fn with_fallbacks(
         .iter()
         .all(|text| text.is_empty() || !resolver.resolve(text).is_empty());
     if !complete {
-        sources.extend(fallbacks.iter().map(|fallback| fallback().get()));
+        sources.extend(fallbacks.into_iter().map(GlyphDataFile::get));
     }
     sources
 }
 
 /// The fallbacks of a standard font: the symbols, and the glyphs of a family
 /// for Symbol, ZapfDingbats and Wingdings.
-fn standard_fallbacks(font: StandardFont) -> &'static [fn() -> &'static GlyphDataFile] {
-    match font {
-        StandardFont::Symbol => &[|| style_file(Family::Serif, false, false), symbols_file],
-        StandardFont::ZapfDingbats | StandardFont::Wingdings => {
-            &[|| style_file(Family::Sans, false, false), symbols_file]
-        }
-        _ => &[symbols_file],
-    }
-}
-
-fn symbols_file() -> &'static GlyphDataFile {
-    &SYMBOLS
+fn standard_fallbacks(font: StandardFont) -> impl Iterator<Item = &'static GlyphDataFile> {
+    let family = match font {
+        StandardFont::Symbol => Some(Family::Serif),
+        StandardFont::ZapfDingbats | StandardFont::Wingdings => Some(Family::Sans),
+        _ => None,
+    };
+    family
+        .into_iter()
+        .map(|family| style_file(family, false, false))
+        .chain([&SYMBOLS])
 }
 
 fn texts_of(glyphs: &[Request]) -> Vec<&[u32]> {
@@ -529,7 +516,7 @@ pub fn generate_font(family: Family, glyphs: &[Request], options: &Options) -> G
     let target = target_of(family, options);
     let (base, base_italic_angle) = base_file(family, &target);
     let base = base.get();
-    let sources = with_fallbacks(base, &[symbols_file], &texts_of(glyphs));
+    let sources = with_fallbacks(base, [&SYMBOLS], &texts_of(glyphs));
     let units_per_em = base.units_per_em as f64;
     let cap_height = (options.cap_height)
         .filter(|&cap_height| cap_height > 0.0)
@@ -564,7 +551,7 @@ pub fn generate_standard_font(
 /// its fallbacks.
 fn missing_texts(
     primary: &'static GlyphData,
-    fallbacks: &[fn() -> &'static GlyphDataFile],
+    fallbacks: impl IntoIterator<Item = &'static GlyphDataFile>,
     texts: &[&[u32]],
 ) -> Vec<usize> {
     let sources = with_fallbacks(primary, fallbacks, texts);
@@ -586,7 +573,7 @@ pub fn missing_standard_glyphs(font: StandardFont, texts: &[&[u32]]) -> Vec<usiz
 /// Indices of the texts which can't be rendered with a family (and the
 /// symbols).
 pub fn missing_glyphs(family: Family, texts: &[&[u32]]) -> Vec<usize> {
-    missing_texts(glyph_data(family), &[symbols_file], texts)
+    missing_texts(glyph_data(family), [&SYMBOLS], texts)
 }
 
 #[cfg(test)]
