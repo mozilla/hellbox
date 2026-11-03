@@ -12,10 +12,39 @@ use crate::payload;
 use crate::Error;
 use std::sync::{Mutex, MutexGuard};
 
-/// Shared stable sort for cmap entries, kerning pairs and scale bits: the
-/// generic sort is big, and each element type would add a copy to the module.
+/// Stable sort by code, shared by the cmap entries, the kerning pairs and the
+/// scale bits: a merge sort, as the one of the standard library is
+/// 6 KB of the wasm module and these sorts are small (a few thousand entries).
 pub(crate) fn sort_by_code(entries: &mut [(u64, usize)]) {
-    entries.sort_by_key(|&(code, _)| code);
+    if entries.is_sorted_by_key(|&(code, _)| code) {
+        return;
+    }
+    // Both buffers start with the same entries, so recursive calls can swap
+    // their roles and merge the sorted halves directly into the destination.
+    merge_sort(&mut entries.to_vec(), entries);
+}
+
+fn merge_sort(src: &mut [(u64, usize)], dst: &mut [(u64, usize)]) {
+    if src.len() < 2 {
+        return;
+    }
+    let mid = src.len() / 2;
+    let (left, right) = src.split_at_mut(mid);
+    let (dst_left, dst_right) = dst.split_at_mut(mid);
+    merge_sort(dst_left, left);
+    merge_sort(dst_right, right);
+
+    let (mut i, mut j) = (0, 0);
+    for entry in dst {
+        // Take the left entry on ties to preserve the original order.
+        if j < right.len() && (i == left.len() || right[j].0 < left[i].0) {
+            *entry = right[j];
+            j += 1;
+        } else {
+            *entry = left[i];
+            i += 1;
+        }
+    }
 }
 
 pub(crate) const MAGIC: [u8; 4] = *b"HBGD";
@@ -557,8 +586,22 @@ impl Glyphs {
 
 #[cfg(all(test, feature = "embedded-data"))]
 mod tests {
-    use super::Glyph;
+    use super::{sort_by_code, Glyph};
     use crate::{glyph_data, Family};
+
+    #[test]
+    fn sorts_by_code_like_the_stable_sort() {
+        for n in (0..300).chain([1000, 4097, 65535]) {
+            // Equal, repeated and descending codes; indices check stability.
+            for codes in [1, 17, n + 1] {
+                let mut entries: Vec<_> = (0..n).map(|i| (((n - i) % codes) as u64, i)).collect();
+                let mut expected = entries.clone();
+                expected.sort_by_key(|&(code, _)| code);
+                sort_by_code(&mut entries);
+                assert_eq!(entries, expected, "{n} entries, {codes} codes");
+            }
+        }
+    }
 
     #[test]
     fn has_the_font_metrics() {
