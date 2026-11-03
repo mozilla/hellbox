@@ -18,7 +18,7 @@
 
 mod common;
 
-use common::{text_requests as text, Source};
+use common::{request, text_requests as text, Source};
 use hellbox::{
     standard_glyph_data, style_glyph_data, symbols_glyph_data, Family, GlyphData, Options, Request,
     StandardFont,
@@ -178,14 +178,6 @@ struct Case {
     requests: Vec<Request>,
 }
 
-fn request(unicode: &[u32], width: Option<f64>, char_code: Option<u32>) -> Request {
-    Request {
-        unicode: unicode.to_vec(),
-        width,
-        char_code,
-    }
-}
-
 fn cases() -> Vec<Case> {
     let case = |name, family, options, requests| Case {
         name,
@@ -295,7 +287,11 @@ fn cases() -> Vec<Case> {
                 (&[0x43], None, 0x41),
             ]
             .iter()
-            .map(|&(unicode, width, char_code)| request(unicode, width, Some(char_code)))
+            .map(|&(unicode, width, char_code)| Request {
+                char_code: Some(char_code),
+                width,
+                ..request(unicode)
+            })
             .collect(),
         ),
         // Many glyphs with scattered char codes.
@@ -307,7 +303,11 @@ fn cases() -> Vec<Case> {
                 ..default()
             },
             (0..9000)
-                .map(|i| request(&[0x41], Some(600.0), Some(3 * i)))
+                .map(|i| Request {
+                    char_code: Some(3 * i),
+                    width: Some(600.0),
+                    ..request(&[0x41])
+                })
                 .collect(),
         ),
         // Bounded italic angle and advances.
@@ -322,7 +322,10 @@ fn cases() -> Vec<Case> {
             [Some(0.0), Some(1.0), Some(1e5), Some(1e6), None]
                 .iter()
                 .zip(0x41..)
-                .map(|(&width, cp)| request(&[cp], width, None))
+                .map(|(&width, cp)| Request {
+                    width,
+                    ..request(&[cp])
+                })
                 .collect(),
         ),
         case("empty", Family::Serif, default(), Vec::new()),

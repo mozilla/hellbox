@@ -32,8 +32,6 @@ const MAX_POINTS: usize = 0xffff;
 const MAX_CONTOURS: usize = 0x7fff;
 /// The name table has 16-bit offsets: the name is truncated.
 const MAX_NAME_LENGTH: usize = 255;
-/// The thickness of the outlines of `Options::debug_boxes`, in em.
-const DEBUG_BOX_STROKE: f64 = 1.0 / 32.0;
 /// The limits of the stem compensation of the fitting (see `build_font`): the
 /// thinning, in horizontal stems (the thin strokes of a serif font must
 /// survive), and the thickening, in vertical stems.
@@ -109,10 +107,6 @@ pub struct Options {
     /// glyphs which aren't in the cmap are ignored, and a subtable has at most
     /// 10920 pairs (the first ones in the order of the requests).
     pub kerning: Vec<Kerning>,
-    /// For debugging: each glyph with an advance,
-    /// .notdef excepted, is the outline (1/32 em thick, inside) of a
-    /// rectangle covering it, from the descender to the ascender.
-    pub debug_boxes: bool,
 }
 
 impl Default for Options {
@@ -134,7 +128,6 @@ impl Default for Options {
             name: DEFAULT_NAME.to_string(),
             ascent: None,
             kerning: Vec::new(),
-            debug_boxes: false,
         }
     }
 }
@@ -262,8 +255,11 @@ struct Metrics {
     fixed_pitch: bool,
 }
 
+/// A glyph of the font: the offset of its outline in the glyf table, the
+/// bounds and sizes of the outline (none for an empty glyph), and its advance.
 struct OutGlyph {
-    outline: Option<Outline>,
+    offset: usize,
+    encoded: Option<EncodedGlyph>,
     advance: u16,
 }
 
@@ -389,9 +385,20 @@ pub fn build_font(
     let mut missing = Vec::new();
     let mut out_glyphs = Vec::with_capacity(count + 1);
     out_glyphs.push(OutGlyph {
-        outline: None,
+        offset: 0,
+        encoded: None,
         advance: (upm / 2.0).round() as u16,
     });
+    // The glyf table: each glyph is encoded when it's built.
+    let mut glyf = Writer::new();
+    // Buffers reused between the glyphs: the parts, the outlines of the
+    // previous parts, the outline of the glyph, the original coordinates
+    // for emboldening, and the encoding buffers.
+    let mut parts: Vec<Part> = Vec::new();
+    let mut spare: Vec<Outline> = Vec::new();
+    let mut glyph_outline = Outline::default();
+    let mut original = (Vec::new(), Vec::new());
+    let mut buffers = GlyphBuffers::default();
     // Use u64 keys to reuse sort_by_code.
     let mut cmap: Vec<(u64, usize)> = Vec::new();
     // The glyphs of the requests, which are decoded together (see
@@ -442,16 +449,16 @@ pub fn build_font(
         }
 
         let mut natural_advance = 0.0;
-        let mut parts: Vec<Part> = Vec::with_capacity(glyphs.len());
         for (source, gid) in glyphs {
             if !used_sources.contains(&source) {
                 used_sources.push(source);
             }
             let data = sources[source];
-            let mut glyph_outline = data.outline(gid);
+            let mut part_outline = spare.pop().unwrap_or_default();
+            data.outline_into(gid, &mut part_outline);
             let scale = upm / data.units_per_em as f64;
             if scale != 1.0 {
-                outline::transform(&mut glyph_outline, [scale, 0.0, 0.0, scale, 0.0, 0.0]);
+                outline::transform(&mut part_outline, [scale, 0.0, 0.0, scale, 0.0, 0.0]);
             }
             let advance = data.advance(gid) as f64 * scale;
             let mut offset = natural_advance;
@@ -459,12 +466,12 @@ pub fn build_font(
             // this builder does not apply mark-positioning tables.
             if let (0.0, Some(previous)) = (advance, parts.last()) {
                 let base = x_bounds(&previous.outline);
-                if let (Some(mark), Some(base)) = (x_bounds(&glyph_outline), base) {
+                if let (Some(mark), Some(base)) = (x_bounds(&part_outline), base) {
                     offset = previous.offset + (base.0 + base.1 - mark.0 - mark.1) / 2.0;
                 }
             }
             parts.push(Part {
-                outline: glyph_outline,
+                outline: part_outline,
                 offset,
                 source,
                 spacing: advance > 0.0,
@@ -477,7 +484,7 @@ pub fn build_font(
         let contours: usize = parts.iter().map(|part| part.outline.end_pts.len()).sum();
         if points > MAX_POINTS || contours > MAX_CONTOURS {
             missing.push(i);
-            parts.clear();
+            spare.extend(parts.drain(..).map(|part| part.outline));
             natural_advance = 0.0;
         }
         for part in &mut parts {
@@ -557,7 +564,7 @@ pub fn build_font(
             }
             let outline = &mut part.outline;
             outline::transform(outline, [x_scale, 0.0, 0.0, synthesis.y_scale, 0.0, 0.0]);
-            outline::embolden(outline, bold_x, bold_y);
+            outline::embolden(outline, bold_x, bold_y, &mut original);
             let bold_y_scale = if cap_height > 0.0 {
                 cap_height / (cap_height + bold_y)
             } else {
@@ -566,9 +573,20 @@ pub fn build_font(
             let dx = shift + part_growth;
             outline::transform(outline, [1.0, 0.0, synthesis.slant, bold_y_scale, dx, 0.0]);
         }
-        let glyph_outline = outline::concat(parts.into_iter().map(|part| part.outline));
+        glyph_outline.clear();
+        for part in parts.drain(..) {
+            outline::append(&mut glyph_outline, &part.outline);
+            spare.push(part.outline);
+        }
+        let offset = glyf.len();
+        let encoded = (!glyph_outline.xs.is_empty()).then(|| {
+            let encoded = encode_glyph(&glyph_outline, &mut glyf, &mut buffers);
+            glyf.pad();
+            encoded
+        });
         out_glyphs.push(OutGlyph {
-            outline: (!glyph_outline.xs.is_empty()).then_some(glyph_outline),
+            offset,
+            encoded,
             advance: advance.round().max(0.0) as u16,
         });
     }
@@ -599,9 +617,6 @@ pub fn build_font(
             primary.line_gap,
         ),
     };
-    if options.debug_boxes {
-        add_debug_boxes(&mut out_glyphs[1..], ascender, descender, upm);
-    }
     let metrics = Metrics {
         units_per_em: primary.units_per_em,
         ascender,
@@ -628,40 +643,8 @@ pub fn build_font(
     .take(MAX_NAME_LENGTH)
     .collect();
     let names = make_names(&used, &name, &metrics);
-    let font = write_font(&out_glyphs, &cmap, &kerning, &metrics, &names);
+    let font = write_font(&out_glyphs, glyf, &cmap, &kerning, &metrics, &names);
     (font, missing)
-}
-
-/// Replaces the outlines of the glyphs with the outlines of boxes covering
-/// their advance, from the descender to the ascender (see
-/// `Options::debug_boxes`).
-fn add_debug_boxes(glyphs: &mut [OutGlyph], ascender: i16, descender: i16, upm: f64) {
-    let (top, bottom) = (ascender as f64, descender as f64);
-    let stroke = (upm * DEBUG_BOX_STROKE).round();
-    for glyph in glyphs {
-        if glyph.advance == 0 {
-            glyph.outline = None;
-            continue;
-        }
-        let right = glyph.advance as f64;
-        // Clockwise outer contour and counter-clockwise inner contour.
-        // Glyphs too narrow for the inner contour are filled.
-        let mut outline = Outline {
-            xs: vec![0.0, 0.0, right, right],
-            ys: vec![bottom, top, top, bottom],
-            on_curve: vec![1; 4],
-            end_pts: vec![3],
-        };
-        let (left, right) = (stroke, right - stroke);
-        let (bottom, top) = (bottom + stroke, top - stroke);
-        if left < right && bottom < top {
-            outline.xs.extend([left, right, right, left]);
-            outline.ys.extend([bottom, bottom, top, top]);
-            outline.on_curve.extend([1; 4]);
-            outline.end_pts.push(7);
-        }
-        glyph.outline = Some(outline);
-    }
 }
 
 /// Keep the first nonzero rounded value per mapped pair, sorted by glyph ids.
@@ -741,37 +724,50 @@ struct EncodedGlyph {
     x_max: i16,
     y_max: i16,
     num_points: usize,
+    num_contours: usize,
 }
 
 /// A rounded coordinate clamped to +/-MAX_COORDINATE.
-fn to_coordinate(v: f64) -> i64 {
-    clamp(v.round(), -MAX_COORDINATE, MAX_COORDINATE) as i64
+fn to_coordinate(v: f64) -> i32 {
+    clamp(v.round(), -MAX_COORDINATE, MAX_COORDINATE) as i32
 }
 
-/// Writes a glyph in `w` (the glyf table), without padding.
-fn encode_glyph(outline: &Outline, w: &mut Writer) -> EncodedGlyph {
-    let xs: Vec<i64> = outline.xs.iter().map(|&v| to_coordinate(v)).collect();
-    let ys: Vec<i64> = outline.ys.iter().map(|&v| to_coordinate(v)).collect();
-    let n = xs.len();
-    // The coordinates are bounded by MAX_COORDINATE.
-    let x_min = *xs.iter().min().unwrap() as i16;
-    let x_max = *xs.iter().max().unwrap() as i16;
-    let y_min = *ys.iter().min().unwrap() as i16;
-    let y_max = *ys.iter().max().unwrap() as i16;
+/// The buffers of `encode_glyph`, reused between the glyphs.
+#[derive(Default)]
+struct GlyphBuffers {
+    flags: Vec<u8>,
+    x_bytes: Vec<u8>,
+    y_bytes: Vec<u8>,
+}
 
-    let mut flags = Vec::with_capacity(n);
-    let mut x_bytes = Vec::new();
-    let mut y_bytes = Vec::new();
+/// Writes a nonempty glyph in `w` (the glyf table), without padding.
+fn encode_glyph(outline: &Outline, w: &mut Writer, buffers: &mut GlyphBuffers) -> EncodedGlyph {
+    let GlyphBuffers {
+        flags,
+        x_bytes,
+        y_bytes,
+    } = buffers;
+    let n = outline.xs.len();
+    let (mut x_min, mut y_min, mut x_max, mut y_max) = (i16::MAX, i16::MAX, i16::MIN, i16::MIN);
+
+    flags.clear();
+    x_bytes.clear();
+    y_bytes.clear();
     let (mut px, mut py) = (0, 0);
     for i in 0..n {
         let mut flag: u8 = if outline.on_curve[i] != 0 { 0x01 } else { 0 };
-        let dx = xs[i] - px;
-        let dy = ys[i] - py;
-        px = xs[i];
-        py = ys[i];
+        let x = to_coordinate(outline.xs[i]);
+        let y = to_coordinate(outline.ys[i]);
+        x_min = x_min.min(x as i16);
+        y_min = y_min.min(y as i16);
+        x_max = x_max.max(x as i16);
+        y_max = y_max.max(y as i16);
+        let dx = x - px;
+        let dy = y - py;
+        (px, py) = (x, y);
         for (d, bytes, short, same) in [
-            (dx, &mut x_bytes, 0x02, 0x10),
-            (dy, &mut y_bytes, 0x04, 0x20),
+            (dx, &mut *x_bytes, 0x02, 0x10),
+            (dy, &mut *y_bytes, 0x04, 0x20),
         ] {
             if d == 0 {
                 flag |= same;
@@ -784,24 +780,6 @@ fn encode_glyph(outline: &Outline, w: &mut Writer) -> EncodedGlyph {
         }
         flags.push(flag);
     }
-    // Compress the flags using the repeat bit.
-    let mut packed = Vec::with_capacity(n);
-    let mut i = 0;
-    while i < n {
-        let flag = flags[i];
-        let mut repeat = 0;
-        while i + repeat + 1 < n && flags[i + repeat + 1] == flag && repeat < 255 {
-            repeat += 1;
-        }
-        if repeat > 0 {
-            packed.push(flag | 0x08);
-            packed.push(repeat as u8);
-        } else {
-            packed.push(flag);
-        }
-        i += repeat + 1;
-    }
-
     // The points and contours are bounded by MAX_POINTS and MAX_CONTOURS.
     w.i16(outline.end_pts.len() as i16);
     w.i16(x_min);
@@ -812,15 +790,28 @@ fn encode_glyph(outline: &Outline, w: &mut Writer) -> EncodedGlyph {
         w.u16(end as u16);
     }
     w.u16(0); // instructionLength
-    w.bytes(&packed);
-    w.bytes(&x_bytes);
-    w.bytes(&y_bytes);
+
+    // Compress the flags using the repeat bit.
+    for run in flags.chunk_by(|a, b| a == b) {
+        // The repeat count is one byte and excludes the first flag.
+        for chunk in run.chunks(256) {
+            let flag = chunk[0];
+            if chunk.len() > 1 {
+                w.bytes(&[flag | 0x08, (chunk.len() - 1) as u8]);
+            } else {
+                w.bytes(&[flag]);
+            }
+        }
+    }
+    w.bytes(x_bytes);
+    w.bytes(y_bytes);
     EncodedGlyph {
         x_min,
         y_min,
         x_max,
         y_max,
         num_points: n,
+        num_contours: outline.end_pts.len(),
     }
 }
 
@@ -1010,6 +1001,7 @@ fn write_kern(pairs: &[(u32, usize)]) -> Vec<u8> {
 /// Requires a cmap sorted by code with no duplicates.
 fn write_font(
     glyphs: &[OutGlyph],
+    mut glyf: Writer,
     cmap: &[(u32, usize)],
     kerning: &[(u32, usize)],
     metrics: &Metrics,
@@ -1018,14 +1010,8 @@ fn write_font(
     let upm = metrics.units_per_em as f64;
     let num_glyphs = glyphs.len();
 
-    // glyf, loca and hmtx, with the bounds of the outlines and the extrema of
-    // their side bearings.
-    // At most a header, the contour ends, and 5 bytes per point (a flag and
-    // two coordinates), with the padding.
-    let glyf_capacity = (glyphs.iter().filter_map(|glyph| glyph.outline.as_ref()))
-        .map(|outline| 12 + 2 * outline.end_pts.len() + 5 * outline.xs.len() + 3)
-        .sum();
-    let mut glyf = Writer::with_capacity(glyf_capacity);
+    // loca and hmtx, with the bounds of the outlines and the extrema of their
+    // side bearings.
     let mut loca = Writer::new();
     let mut hmtx = Writer::new();
     let (mut x_min, mut y_min, mut x_max, mut y_max) = (i16::MAX, i16::MAX, i16::MIN, i16::MIN);
@@ -1035,19 +1021,17 @@ fn write_font(
     let (mut width_sum, mut width_count) = (0, 0);
     for glyph in glyphs {
         let advance = glyph.advance;
-        loca.u32(glyf.len() as u32);
+        loca.u32(glyph.offset as u32);
         advance_width_max = advance_width_max.max(advance);
         if advance > 0 {
             width_sum += u32::from(advance);
             width_count += 1;
         }
         hmtx.u16(advance);
-        let Some(outline) = &glyph.outline else {
+        let Some(encoded) = &glyph.encoded else {
             hmtx.i16(0);
             continue;
         };
-        let encoded = encode_glyph(outline, &mut glyf);
-        glyf.pad();
         hmtx.i16(encoded.x_min);
         x_min = x_min.min(encoded.x_min);
         y_min = y_min.min(encoded.y_min);
@@ -1058,7 +1042,7 @@ fn write_font(
         min_rsb = min_rsb.min(advance as i16 - encoded.x_max);
         x_max_extent = x_max_extent.max(encoded.x_max);
         max_points = max_points.max(encoded.num_points);
-        max_contours = max_contours.max(outline.end_pts.len());
+        max_contours = max_contours.max(encoded.num_contours);
     }
     loca.u32(glyf.len() as u32);
     // Keep glyf nonempty even when every loca offset is zero.

@@ -435,7 +435,6 @@ pub struct GeneratedFont {
     pub data: Vec<u8>,
     /// Indices of unresolved requests. Also includes requests
     /// exceeding point/contour limits or after the first 65534.
-    /// `debug_boxes` can draw boxes for missing requests with a nonzero advance.
     pub missing: Vec<usize>,
 }
 

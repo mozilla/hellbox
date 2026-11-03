@@ -47,6 +47,13 @@ pub fn characters(text: &str) -> Vec<char> {
     chars
 }
 
+pub fn request(unicode: &[u32]) -> Request {
+    Request {
+        unicode: unicode.to_vec(),
+        ..Request::default()
+    }
+}
+
 pub fn text_requests(text: &str, width: impl Fn(usize) -> Option<f64>) -> Vec<Request> {
     characters(text)
         .into_iter()

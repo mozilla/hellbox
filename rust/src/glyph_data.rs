@@ -87,6 +87,16 @@ pub struct Outline {
     pub end_pts: Vec<usize>,
 }
 
+impl Outline {
+    /// Removes the points and contours, keeping the buffers.
+    pub fn clear(&mut self) {
+        self.xs.clear();
+        self.ys.clear();
+        self.on_curve.clear();
+        self.end_pts.clear();
+    }
+}
+
 pub struct GlyphData {
     pub units_per_em: u16,
     grid: u8,
@@ -326,16 +336,22 @@ impl GlyphData {
     /// The outline of a glyph, composite glyphs being flattened.
     pub fn outline(&self, gid: usize) -> Outline {
         let mut outline = Outline::default();
+        self.outline_into(gid, &mut outline);
+        outline
+    }
+
+    /// The outline of a glyph in `outline`, whose buffers are reused.
+    pub fn outline_into(&self, gid: usize, outline: &mut Outline) {
+        outline.clear();
         let mut budget = MAX_VISITED_GLYPHS;
         self.decoded(&[gid]).collect_contours(
             self.grid as f64,
             gid as i64,
             [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-            &mut outline,
+            outline,
             0,
             &mut budget,
         );
-        outline
     }
 }
 

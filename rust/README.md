@@ -90,16 +90,13 @@ const { default: instantiate } = await import("./hellbox_nowasm_fallback.js");
 initJs(instantiate); // Instead of initSync: the other functions are the same.
 ```
 
-Three optional last arguments of `generate_font` and `generate_standard_font`:
+Two optional last arguments of `generate_font` and `generate_standard_font`:
 
 - `ascent`, the ascent as a fraction of the em: the descent is the rest,
   without line gap (the lines are an em high),
 - `kerning`, a `Float64Array` of triples (index of the left glyph, index of the
   right one, adjustment of the advance of the left one in 1/1000 em): a `kern`
-  table,
-- `debugBoxes` (`false` by default), for debugging: each glyph with an advance
-  is the outline (1/32 em thick, inside) of a rectangle covering it, from the
-  descender to the ascender.
+  table.
 
 The text of a glyph is usually a single codepoint, but it can be a ligature
 (`ffi` gives U+FB03) or a letter followed by combining marks (which are

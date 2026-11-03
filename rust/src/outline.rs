@@ -42,8 +42,14 @@ fn orientation(outline: &Outline) -> f64 {
 /// FT_Outline_EmboldenXY. Adjacent-edge bisectors determine point shifts;
 /// sharp turns and short edges limit them. Negative strengths thin outlines.
 /// Edge lengths use `sqrt(dx * dx + dy * dy)`: `hypot` differs between
-/// platforms.
-pub fn embolden(outline: &mut Outline, x_strength: f64, y_strength: f64) {
+/// platforms. `original` keeps a copy of the coordinates (its buffers are
+/// reused between calls).
+pub fn embolden(
+    outline: &mut Outline,
+    x_strength: f64,
+    y_strength: f64,
+    original: &mut (Vec<f64>, Vec<f64>),
+) {
     let x_str = x_strength / 2.0;
     let y_str = y_strength / 2.0;
     if (x_str == 0.0 && y_str == 0.0) || outline.xs.is_empty() {
@@ -55,10 +61,9 @@ pub fn embolden(outline: &mut Outline, x_strength: f64, y_strength: f64) {
     }
     let true_type = area < 0.0;
 
-    let xs = &outline.xs;
-    let ys = &outline.ys;
-    let mut new_xs = xs.clone();
-    let mut new_ys = ys.clone();
+    let (xs, ys) = original;
+    xs.clone_from(&outline.xs);
+    ys.clone_from(&outline.ys);
     let mut start = 0;
     for &end in &outline.end_pts {
         let n = end - start + 1;
@@ -107,27 +112,20 @@ pub fn embolden(outline: &mut Outline, x_strength: f64, y_strength: f64) {
                 shift_x *= if x_str * q <= l * d { x_str / d } else { l / q };
                 shift_y *= if y_str * q <= l * d { y_str / d } else { l / q };
             }
-            new_xs[cur] = x + x_str + shift_x;
-            new_ys[cur] = y + y_str + shift_y;
+            outline.xs[cur] = x + x_str + shift_x;
+            outline.ys[cur] = y + y_str + shift_y;
         }
         start = end + 1;
     }
-    outline.xs = new_xs;
-    outline.ys = new_ys;
 }
 
-/// Concatenates outlines.
-pub fn concat(parts: impl IntoIterator<Item = Outline>) -> Outline {
-    let mut parts = parts.into_iter();
-    let mut result = parts.next().unwrap_or_default();
-    for outline in parts {
-        let offset = result.xs.len();
-        result.xs.extend_from_slice(&outline.xs);
-        result.ys.extend_from_slice(&outline.ys);
-        result.on_curve.extend_from_slice(&outline.on_curve);
-        result
-            .end_pts
-            .extend(outline.end_pts.iter().map(|end| end + offset));
-    }
-    result
+/// Appends the contours of `part` to `outline`.
+pub fn append(outline: &mut Outline, part: &Outline) {
+    let offset = outline.xs.len();
+    outline.xs.extend_from_slice(&part.xs);
+    outline.ys.extend_from_slice(&part.ys);
+    outline.on_curve.extend_from_slice(&part.on_curve);
+    outline
+        .end_pts
+        .extend(part.end_pts.iter().map(|end| end + offset));
 }

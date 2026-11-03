@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::text_requests;
+use common::{request, text_requests};
 use hellbox::{
     generate_font, generate_standard_font, glyph_data, standard_glyph_data, symbols_glyph_data,
     Family, GlyphData, Kerning, Options, Request, StandardFont,
@@ -88,13 +88,6 @@ fn check(name: &str, font: &[u8]) {
             "{name}: OTS changed the {tag} table: {}",
             keep(name, font).display()
         );
-    }
-}
-
-fn request(unicode: &[u32]) -> Request {
-    Request {
-        unicode: unicode.to_vec(),
-        ..Request::default()
     }
 }
 
@@ -392,7 +385,7 @@ fn texts() {
         request(&vec![':' as u32; 17000]),
     ];
     let font = generate_font(Family::Sans, &glyphs, &Options::default());
-    assert_eq!(font.missing, vec![1, 2]);
+    assert_eq!(font.missing, [1, 2]);
     check("long texts", &font.data);
 }
 
@@ -518,9 +511,10 @@ fn random_fonts() {
     }
 }
 
-/// Debug boxes with varied advances and a custom ascent.
+/// A lot of glyphs, with varied advances and a custom ascent: the loca table
+/// has long offsets.
 #[test]
-fn debug_boxes() {
+fn a_lot_of_glyphs() {
     let glyphs: Vec<Request> = (0..10000)
         .map(|i| Request {
             char_code: Some(0x20 + i),
@@ -529,19 +523,11 @@ fn debug_boxes() {
         })
         .collect();
     let options = Options {
-        debug_boxes: true,
+        ascent: Some(0.8),
         ..Options::default()
     };
-    check(
-        "debug boxes",
-        &generate_font(Family::Serif, &sample(), &options).data,
-    );
-    let options = Options {
-        ascent: Some(0.8),
-        ..options
-    };
     let font = generate_font(Family::Sans, &glyphs, &options).data;
-    check("a lot of debug boxes", &font);
+    check("a lot of glyphs", &font);
     let head = tables(&font)["head"];
     assert_eq!(&head[50..52], &[0, 1], "indexToLocFormat: long offsets");
 }

@@ -549,61 +549,6 @@ fn uses_the_given_ascent() {
     );
 }
 
-#[test]
-fn draws_debug_boxes() {
-    let requests = [
-        request("A", Some(600.0), None),
-        request("B", Some(600.0), None),
-        request("i", None, None),
-        // Narrower than two strokes.
-        request(".", Some(50.0), None),
-        request("\u{301}", Some(0.0), None),
-    ];
-    let upm = glyph_data(Family::Sans).units_per_em as f64;
-    let stroke = (upm / 32.0).round();
-    let point = |x, y| Point { x, y, on: true };
-    let options = Options {
-        ascent: Some(0.8),
-        debug_boxes: true,
-        ..Options::default()
-    };
-    let font = read(&generate_font(Family::Sans, &requests, &options).data);
-    let (top, bottom) = (units(Family::Sans, 800.0), units(Family::Sans, 800.0) - upm);
-    let gid = |c: char| font.cmap[&(c as u32)] as usize;
-    let filled = |right| {
-        vec![
-            point(0.0, bottom),
-            point(0.0, top),
-            point(right, top),
-            point(right, bottom),
-        ]
-    };
-    assert!(font.glyphs[0].is_empty(), ".notdef");
-    for c in ['A', 'B', 'i'] {
-        let right = font.advances[gid(c)] as f64;
-        let (left, right_inside) = (stroke, right - stroke);
-        let (bottom, top) = (bottom + stroke, top - stroke);
-        assert_eq!(
-            font.glyphs[gid(c)],
-            vec![
-                filled(right),
-                vec![
-                    point(left, bottom),
-                    point(right_inside, bottom),
-                    point(right_inside, top),
-                    point(left, top)
-                ]
-            ],
-            "{c}"
-        );
-    }
-    let right = font.advances[gid('.')] as f64;
-    assert!(right < 2.0 * stroke);
-    assert_eq!(font.glyphs[gid('.')], vec![filled(right)]);
-    // Nothing to draw without advance.
-    assert!(font.glyphs[gid('\u{301}')].is_empty());
-}
-
 /// The pairs of glyph ids of the `kern` table of a font, with their kerning.
 fn kern_pairs(data: &[u8]) -> BTreeMap<(u16, u16), i16> {
     let font = FontRef::new(data).unwrap();

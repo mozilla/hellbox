@@ -17,7 +17,7 @@
 
 mod common;
 
-use common::{characters, Source};
+use common::{characters, request, Source};
 use hellbox::{
     glyph_data, standard_glyph_data, Family, GeneratedFont, Options, Request, StandardFont,
 };
@@ -36,21 +36,13 @@ struct Case {
     glyphs: Vec<Request>,
 }
 
-fn request(unicode: &[u32], width: Option<f64>) -> Request {
-    Request {
-        unicode: unicode.to_vec(),
-        width,
-        char_code: None,
-    }
-}
-
 /// The requests for the distinct characters of a text, at their natural
 /// widths.
 fn chars(text: &str) -> Vec<Request> {
     characters(text)
         .into_iter()
         .filter(|c| !c.is_whitespace())
-        .map(|c| request(&[c as u32], None))
+        .map(|c| request(&[c as u32]))
         .collect()
 }
 
@@ -104,7 +96,10 @@ fn cases() -> Vec<Case> {
     let mut glyphs = Vec::new();
     for c in ['M', 'i', 'o'] {
         for width in widths {
-            glyphs.push(request(&[c as u32], width));
+            glyphs.push(Request {
+                width,
+                ..request(&[c as u32])
+            });
         }
     }
     cases.push(case("sans-widths", Family::Sans, default(), glyphs));
@@ -198,7 +193,7 @@ fn cases() -> Vec<Case> {
         &[],
         &[0x4e00],
     ];
-    let glyphs = texts.iter().map(|text| request(text, None)).collect();
+    let glyphs = texts.iter().map(|text| request(text)).collect();
     cases.push(case("sans-texts", Family::Sans, default(), glyphs));
 
     let symbols = "←↑→↓↔⇒ ∑∏∫√∞≈≠≤≥ ■□●○▲►◆★☆ ☐☑☒✓✔✗✘ ♠♣♥♦ ①②③ ⌘⏎";
@@ -213,7 +208,7 @@ fn cases() -> Vec<Case> {
     let texts = |texts: &[&str]| {
         texts
             .iter()
-            .map(|text| request(&text.chars().map(u32::from).collect::<Vec<_>>(), None))
+            .map(|text| request(&text.chars().map(u32::from).collect::<Vec<_>>()))
             .collect()
     };
     let options = Options {
@@ -246,13 +241,13 @@ fn cases() -> Vec<Case> {
         let glyphs = match font {
             StandardFont::Symbol | StandardFont::ZapfDingbats => (standard_glyph_data(font)
                 .codepoints())
-            .map(|cp| request(&[cp], None))
+            .map(|cp| request(&[cp]))
             .collect(),
             StandardFont::Wingdings => {
                 let mut glyphs = chars("▪➢✓✔☐☑☒⮚❖");
                 let sample: Vec<Request> = (standard_glyph_data(font).codepoints().step_by(5))
                     .filter(|&cp| !glyphs.iter().any(|glyph| glyph.unicode == [cp]))
-                    .map(|cp| request(&[cp], None))
+                    .map(|cp| request(&[cp]))
                     .collect();
                 glyphs.extend(sample);
                 glyphs

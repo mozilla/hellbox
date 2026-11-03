@@ -183,9 +183,6 @@ fn kerning(triples: Option<Vec<f64>>, n: usize) -> Result<Vec<Kerning>, JsError>
 ///   (index of the left glyph, index of the right one, adjustment of the
 ///   advance of the left one in 1/1000 em): at most 10920 pairs, the first
 ///   ones in the order of the glyphs.
-/// - `debug_boxes` (optional, `false` by default): for debugging, each glyph
-///   with an advance is the outline (1/32 em thick, inside) of a rectangle
-///   covering it, from the descender to the ascender.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn generate_font(
@@ -202,7 +199,6 @@ pub fn generate_font(
     cap_height: f64,
     ascent: Option<f64>,
     kerning: Option<Vec<f64>>,
-    debug_boxes: Option<bool>,
 ) -> Result<Vec<u8>, JsError> {
     let glyphs = requests(codepoints, lengths, widths, char_codes)?;
     let kerning = self::kerning(kerning, glyphs.len())?;
@@ -210,7 +206,6 @@ pub fn generate_font(
         cap_height: optional(cap_height),
         ascent,
         kerning,
-        debug_boxes: debug_boxes.unwrap_or(false),
         ..style_options(bold, italic, weight, stem_v, italic_angle)
     };
     let family = self::family(family)?;
@@ -249,7 +244,6 @@ pub fn generate_standard_font(
     name: &str,
     ascent: Option<f64>,
     kerning: Option<Vec<f64>>,
-    debug_boxes: Option<bool>,
 ) -> Result<Vec<u8>, JsError> {
     let font = standard_font(name)?;
     check_data(crate::standard_font_data_files(font))?;
@@ -258,7 +252,6 @@ pub fn generate_standard_font(
     let options = Options {
         ascent,
         kerning,
-        debug_boxes: debug_boxes.unwrap_or(false),
         ..Options::default()
     };
     Ok(crate::generate_standard_font(font, &glyphs, &options).data)
