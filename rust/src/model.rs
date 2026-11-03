@@ -549,10 +549,10 @@ impl Drop for PointHistory {
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
-    /// Reuses the largest dropped slot buffer on this wasm thread.
-    /// `PointHistory::new` clears it before use. A new table wouldn't reuse
-    /// the freed memory (smaller allocations take it in between) and wasm
-    /// memory never shrinks; natively, a freed table goes back to the system.
+    /// Keeps the largest dropped slot buffer for reuse on this wasm thread.
+    /// `PointHistory::new` clears it before use. Smaller allocations would
+    /// take the freed memory and wasm memory never shrinks (natively, a freed
+    /// buffer goes back to the system).
     static HISTORY_SLOTS: Cell<Vec<u32>> = const { Cell::new(Vec::new()) };
 }
 
@@ -633,8 +633,8 @@ impl PointHistory {
     }
 }
 
-/// Maps (order, hash) to the last point following that context in the current
-/// contour. Stamps let the open-addressing table be reused across contours.
+/// Maps (order, hash) to the last following point in the current contour.
+/// Stamps invalidate previous contours without clearing the table.
 #[derive(Default)]
 struct LocalContexts {
     slots: Vec<LocalSlot>,
@@ -1094,9 +1094,8 @@ impl Model {
         self.lists.get(usize::try_from(n).ok()?)
     }
 
-    /// A model whose models of the glyphs are empty when they aren't needed
-    /// (to decode only the header, strings and cmap: they are big, and
-    /// initializing them is a good part of the decoding of a few glyphs).
+    /// Omits glyph probability tables when decoding only the header, strings
+    /// and cmap.
     fn with_glyph_models(glyphs: bool) -> Self {
         let n = |size: usize| if glyphs { size } else { 0 };
         Model {

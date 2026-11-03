@@ -2,10 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Reference tests: the glyphs of some generated fonts (Noto and standard
-//! fonts), read and drawn by
-//! skrifa (the font scaler of Google's Fontations), are written in SVG files
-//! which must be the same as the references in `tests/refs/`.
+//! Draws generated fonts with skrifa and compares the SVGs with `tests/refs/`.
 //!
 //! The SVG files which differ from their references are written in
 //! `target/tmp/reftest/`, with an `index.html` to compare them (hovering an
@@ -18,9 +15,11 @@
 
 #![cfg(feature = "embedded-data")]
 
+mod common;
+
+use common::{characters, Source};
 use hellbox::{
-    generate_font, generate_standard_font, glyph_data, standard_glyph_data, Family, GeneratedFont,
-    Options, Request, StandardFont,
+    glyph_data, standard_glyph_data, Family, GeneratedFont, Options, Request, StandardFont,
 };
 use skrifa::font::glyph::outline::{ControlBoundsSink, SvgSink};
 use skrifa::font::name::NameId;
@@ -29,13 +28,6 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-/// The glyph data of a font.
-#[derive(Clone, Copy)]
-enum Source {
-    Family(Family),
-    Standard(StandardFont),
-}
 
 struct Case {
     name: String,
@@ -55,13 +47,11 @@ fn request(unicode: &[u32], width: Option<f64>) -> Request {
 /// The requests for the distinct characters of a text, at their natural
 /// widths.
 fn chars(text: &str) -> Vec<Request> {
-    let mut chars: Vec<char> = Vec::new();
-    for c in text.chars().filter(|c| !c.is_whitespace()) {
-        if !chars.contains(&c) {
-            chars.push(c);
-        }
-    }
-    chars.iter().map(|&c| request(&[c as u32], None)).collect()
+    characters(text)
+        .into_iter()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| request(&[c as u32], None))
+        .collect()
 }
 
 /// The classic text to test a typeface, punctuation, digits, accents, Greek,
@@ -250,10 +240,8 @@ fn cases() -> Vec<Case> {
     let code = "┌─┬┐│├┼┤└┴┘═║╔╗╚╝ fn main() { x[0] = 42; }";
     cases.push(case("mono-code", Family::Mono, default(), chars(code)));
 
-    // The standard fonts: the sample, whose symbols come from the Noto fonts
-    // (synthesized to the style), all the glyphs of Symbol and ZapfDingbats,
-    // and the bullets and check boxes of Wingdings with a fifth of its glyphs
-    // (all of them would make a 600 KB reference).
+    // Standard fonts: the sample, all Symbol/ZapfDingbats glyphs, and selected
+    // Wingdings symbols plus every fifth glyph.
     for font in StandardFont::ALL {
         let glyphs = match font {
             StandardFont::Symbol | StandardFont::ZapfDingbats => (standard_glyph_data(font)
@@ -450,10 +438,7 @@ fn draws_the_glyphs_like_the_references() {
     let cases = cases();
     let mut failures = Vec::new();
     for case in &cases {
-        let font = match case.source {
-            Source::Family(family) => generate_font(family, &case.glyphs, &case.options),
-            Source::Standard(font) => generate_standard_font(font, &case.glyphs, &case.options),
-        };
+        let font = case.source.generate(&case.glyphs, &case.options);
         let svg = draw(case, &font);
         let file = format!("{}.svg", case.name);
         let reference = fs::read_to_string(refs.join(&file)).ok();

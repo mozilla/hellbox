@@ -8,6 +8,9 @@
 
 #![cfg(feature = "embedded-data")]
 
+mod common;
+
+use common::text_requests;
 use hellbox::{
     generate_font, generate_standard_font, glyph_data, standard_glyph_data, symbols_glyph_data,
     Family, GlyphData, Kerning, Options, Request, StandardFont,
@@ -39,13 +42,7 @@ fn tables(font: &[u8]) -> BTreeMap<String, &[u8]> {
 
 /// The selected cmap subtable, excluding .notdef.
 fn cmap(table: &[u8]) -> BTreeMap<u32, u32> {
-    let cmap = Cmap::read(FontData::new(table)).unwrap();
-    let (_, _, subtable) = cmap.best_subtable().unwrap();
-    subtable
-        .iter()
-        .map(|(code, gid)| (code, gid.to_u32()))
-        .filter(|&(_, gid)| gid != 0)
-        .collect()
+    common::cmap(Cmap::read(FontData::new(table)).unwrap())
 }
 
 /// Writes a font in `target/tmp/ots/`, to examine it when it fails (e.g.
@@ -103,20 +100,7 @@ fn request(unicode: &[u32]) -> Request {
 
 /// The distinct characters of `TEXT`, with various widths.
 fn sample() -> Vec<Request> {
-    let mut chars: Vec<char> = Vec::new();
-    for c in TEXT.chars() {
-        if !chars.contains(&c) {
-            chars.push(c);
-        }
-    }
-    chars
-        .into_iter()
-        .enumerate()
-        .map(|(i, c)| Request {
-            width: Some(400.0 + (i % 7) as f64 * 50.0),
-            ..request(&[c as u32])
-        })
-        .collect()
+    text_requests(TEXT, |i| Some(400.0 + (i % 7) as f64 * 50.0))
 }
 
 fn all_the_glyphs(data: &GlyphData) -> Vec<Request> {

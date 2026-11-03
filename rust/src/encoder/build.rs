@@ -7,8 +7,8 @@
 //! A codepoint is taken from the first font having it (and having it in its
 //! ranges). Only the glyphs reachable from the cmap are kept (plus the
 //! components they use), without any hinting, glyph names or layout tables.
-//! The stems are measured, to embolden the outlines at runtime. With the
-//! metrics of a font (see `Metrics`), the glyphs are moved onto its boxes.
+//! Measures stems for runtime emboldening; optional AFM metrics fit glyphs
+//! to target boxes (see `Metrics`).
 
 use super::font::{self, Point, SourceComponent, SourceFont, SourceGlyph};
 use super::search::EncoderOptions;
@@ -71,9 +71,9 @@ impl FontSpec {
 
 /// AFM widths and target boxes for named glyphs, in 1/1000 em.
 ///
-/// Fit uniformly to the height, limited by max(box width, advance),
-/// and center on the box. Width-limited glyphs align bottoms when both
-/// bottoms are near the baseline. `Pieces` controls separate axis fits.
+/// Fits uniformly within the box height and max(box width, advance).
+/// Width-limited glyphs align near-baseline bottoms; others are centered.
+/// `Pieces` controls separate axis fits.
 #[derive(Clone, Debug)]
 pub struct Metrics {
     pub path: PathBuf,
@@ -84,9 +84,8 @@ pub struct Metrics {
     pub glyphs_of: Vec<(u32, u32)>,
 }
 
-/// Fit pieces vertically to their AFM boxes and their stems horizontally
-/// to the extension's box. Fit the extension on both axes; empty piece
-/// lists fit only the extension (e.g. the radical).
+/// Fits pieces vertically to their AFM boxes and their stems to the
+/// extension's horizontal bounds. The extension fits on both axes.
 #[derive(Clone, Debug)]
 pub struct Pieces {
     pub extension: String,
@@ -483,8 +482,7 @@ fn bounding_box(contours: &[Vec<Point>]) -> Option<[f64; 4]> {
 enum Placement {
     /// Uniform fit; `baseline` is the tolerance for aligning glyph bottoms.
     Fit { width: f64, baseline: f64 },
-    /// Exactly onto its box vertically, and with x' = a * x + b horizontally
-    /// (see `Pieces`).
+    /// Fits the box height and applies x' = a * x + b (see `Pieces`).
     Join { a: f64, b: f64 },
 }
 
@@ -581,7 +579,7 @@ struct Built {
 }
 
 /// Replaces named cmap entries with fitted outlines in primary-font units.
-/// Returns their synthetic source font; `origins` records each source font.
+/// Returns a synthetic font; `origins` records each fitted glyph's source font.
 fn synthesize(
     fonts: &[Font],
     cmap: &mut HashMap<u32, Key>,

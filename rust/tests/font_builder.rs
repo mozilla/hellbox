@@ -8,6 +8,8 @@
 
 #![cfg(feature = "embedded-data")]
 
+mod common;
+
 use hellbox::{
     generate_font, generate_standard_font, glyph_data, missing_standard_glyphs,
     standard_glyph_data, style_glyph_data, symbols_glyph_data, Family, GlyphData, Kerning, Options,
@@ -70,18 +72,12 @@ fn read(data: &[u8]) -> Font {
             },
         )
         .collect();
-    let (_, _, subtable) = font.cmap().unwrap().best_subtable().unwrap();
     Font {
         glyphs,
         advances: (0..num_glyphs)
             .map(|gid| hmtx.advance(GlyphId::new(gid)).unwrap())
             .collect(),
-        // Without the mappings to .notdef (e.g. 0xFFFF in a format 4 subtable).
-        cmap: subtable
-            .iter()
-            .map(|(c, gid)| (c, gid.to_u32()))
-            .filter(|&(_, gid)| gid != 0)
-            .collect(),
+        cmap: common::cmap(font.cmap().unwrap()),
         weight_class: font.os2().unwrap().us_weight_class(),
         italic_angle: font.post().unwrap().italic_angle().to_f64(),
     }
@@ -645,34 +641,16 @@ fn kerns_the_pairs_of_glyphs() {
         // A code already mapped: its kerning is ignored.
         request("x", Some(500.0), Some('a' as u32)),
     ];
-    let kerning = vec![
-        Kerning {
-            left: 0,
-            right: 1,
-            value: -80.0,
-        },
-        Kerning {
-            left: 1,
-            right: 0,
-            value: 40.4,
-        },
-        // Too small, the first one of a pair, a glyph which isn't mapped.
-        Kerning {
-            left: 2,
-            right: 3,
-            value: 0.2,
-        },
-        Kerning {
-            left: 0,
-            right: 1,
-            value: -30.0,
-        },
-        Kerning {
-            left: 4,
-            right: 0,
-            value: -50.0,
-        },
-    ];
+    let kerning = [
+        (0, 1, -80.0),
+        (1, 0, 40.4),
+        // Too small, a duplicate pair, and a glyph which isn't mapped.
+        (2, 3, 0.2),
+        (0, 1, -30.0),
+        (4, 0, -50.0),
+    ]
+    .map(|(left, right, value)| Kerning { left, right, value })
+    .to_vec();
     let options = Options {
         kerning,
         ..Options::default()

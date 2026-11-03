@@ -60,8 +60,7 @@ fn family_case(case: &str) -> Option<(Family, Options)> {
 
 const STYLES: [&str; 5] = ["regular", "bold", "italic", "black", "thick-italic"];
 
-/// Child process: exercise generation and missing-glyph lookup with only
-/// the listed files.
+/// Runs in a child process with only the listed files registered.
 #[test]
 fn runs_a_case() {
     let Ok(case) = std::env::var(CASE) else {
@@ -133,8 +132,7 @@ fn lists_the_files_of_the_fonts() {
             "unicode.bin"
         ]
     );
-    // The regular style for the missing glyphs, and both weights with an
-    // expected stem.
+    // Missing-glyph lookup needs regular; stem matching needs both weights.
     let italic = Options {
         italic: true,
         ..Options::default()

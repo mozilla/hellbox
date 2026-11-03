@@ -20,9 +20,9 @@ const SLOW_SHIFT: u32 = 8;
 /// number of decisions, saturated at 255.
 type Probability = (u16, u16, u8);
 
-/// Adaptive probabilities, with both estimates and the decision count stored
-/// together: a decision reads a single cache line (the contexts are hashed,
-/// so the accesses are random).
+/// Stores both probability estimates and their decision count together: a
+/// decision reads one cache line (the contexts are hashed, so accesses are
+/// random).
 pub struct BitModels {
     models: Vec<Probability>,
 }

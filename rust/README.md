@@ -107,16 +107,10 @@ composed if possible, else rendered as a sequence). A codepoint which isn't in
 the data is replaced by its normalized forms when possible (e.g. 𝐀 by A, ㎡ by
 m and 2).
 
-The first font of a style decodes its glyphs, from the first one up to the
-last one it needs: the glyphs of the characters of the 8-bit encodings of PDF
-come first in the files of the families, so that a font with them takes about
-6 ms with Node.js 24, a font with all the glyphs about 25 ms (more for the
-first call, which also decodes the Unicode tables, and when the symbols are
-needed). A font needing glyphs which aren't decoded yet decodes again from the
-first glyph (the state of the decoder isn't kept): up to the last needed one,
-or all of them beyond half of the glyphs. Then a font with ~50 glyphs takes
-less than 1 ms (about 1 ms for the 244 glyphs of the 8-bit encodings, 6 ms for
-the 3010 glyphs of Arimo).
+Glyphs are decoded on demand and cached. Family files put 8-bit encoding
+glyphs first. When more glyphs are needed, decoding restarts from the first
+glyph and at least doubles the cached prefix. Beyond half of the glyphs,
+the whole file is decoded.
 
 ## Rust API
 
@@ -172,15 +166,12 @@ files and doesn't write the JS version.
 
 ## Encoder
 
-With the `encoder` feature, the crate also builds the glyph data files, the
-fonts being read with [read-fonts](https://crates.io/crates/read-fonts): all
-the files of `data/` are built in 1.1 s (in parallel).
+The `encoder` feature builds glyph data files from fonts read with
+[read-fonts](https://crates.io/crates/read-fonts).
 
-The search of the references of each contour is split between threads
-(`--threads`, 8 at most by default), the result being exactly the one of the
-sequential search: it's for the big searches (e.g. thousands of ideographs),
-which are several times faster. The threads spin between the searches
-(they're short, and waking threads up costs more than them).
+Contour reference searches use up to 8 threads by default (`--threads`).
+Results are merged in scan order to preserve sequential tie-breaking.
+Workers spin while waiting for the next search.
 
 ```sh
 # The files of data/, from the fonts of ../sources/ (see
@@ -273,17 +264,14 @@ UPDATE_REFS=1 cargo test --release --test reftest  # Updates tests/refs/.
 
 `tests/ots.rs` checks that OTS (the font sanitizer of Firefox and Chrome, built
 by Servo's [fontsan](https://crates.io/crates/fontsan), hence a C++ compiler is
-needed) accepts the generated fonts (all the glyphs, extreme options, edge char
-codes, 200 random fonts...) without fixing anything: the sanitized font must be
-the same, except the cmap which OTS always rebuilds (with the same mapping).
-fontsan doesn't give the messages of OTS, but its warnings come with a fix
-(except a few ones about the layout of the cmap). The fonts which fail are
-written in `target/tmp/ots/`: `ots-sanitize` (`pip install opentype-sanitizer`)
-prints the messages of OTS.
+needed) accepts the generated fonts, including extreme options, edge char
+codes and 200 random cases. Tests compare sanitized tables, comparing cmap
+mappings and ignoring head.checkSumAdjustment. Failing fonts are written in
+`target/tmp/ots/` for inspection with `ots-sanitize`.
 
-The arithmetic of the font builder is deterministic (no `hypot`, the slant
-rounded to 16.16 since `tan` isn't the same everywhere), so that the fonts are
-the same everywhere: changing it changes the fonts (see the snapshots).
+The font builder uses `sqrt` for lengths and rounds slant to 16.16, as `hypot`
+and `tan` differ between platforms: the fonts must be the same everywhere. CI
+checks font snapshots and reference drawings on Linux, macOS and Windows.
 
 ## Benchmarks
 

@@ -41,8 +41,8 @@ fn orientation(outline: &Outline) -> f64 {
 /// Embolden in place using a floating-point adaptation of FreeType's
 /// FT_Outline_EmboldenXY. Adjacent-edge bisectors determine point shifts;
 /// sharp turns and short edges limit them. Negative strengths thin outlines.
-/// Edge lengths use `sqrt(dx * dx + dy * dy)`, not `hypot`, which differs
-/// between platforms.
+/// Edge lengths use `sqrt(dx * dx + dy * dy)`: `hypot` differs between
+/// platforms.
 pub fn embolden(outline: &mut Outline, x_strength: f64, y_strength: f64) {
     let x_str = x_strength / 2.0;
     let y_str = y_strength / 2.0;

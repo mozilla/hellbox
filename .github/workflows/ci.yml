@@ -100,10 +100,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      # Built by cargo, as the actions of the organization are restricted (it's
-      # cached with ~/.cargo/bin by rust-cache).
       - run: cargo install wasm-pack --version 0.15.1 --locked
-      # What build.js runs in its container, the warnings being errors.
+      # Use the same build script as Docker, with warnings treated as errors.
       - run: ./compile.sh
         env:
           RUSTFLAGS: -D warnings

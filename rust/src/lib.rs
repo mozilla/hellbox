@@ -361,8 +361,7 @@ pub fn standard_glyph_data(font: StandardFont) -> &'static GlyphData {
     standard_file(font).0.get()
 }
 
-/// The glyph data file of a standard font, and its italic angle if it's
-/// italic (see `base_file`).
+/// A standard font's data file and source italic angle.
 fn standard_file(font: StandardFont) -> (&'static GlyphDataFile, Option<f64>) {
     match font.style() {
         (Some(family), target) => base_file(family, &target),
@@ -372,8 +371,7 @@ fn standard_file(font: StandardFont) -> (&'static GlyphDataFile, Option<f64>) {
     }
 }
 
-/// The style of a family closest to a style: its glyph data file, and its
-/// italic angle if it's italic.
+/// The closest source style's data file and italic angle.
 fn base_file(family: Family, target: &Target) -> (&'static GlyphDataFile, Option<f64>) {
     let bold = target.weight >= BOLD_THRESHOLD;
     let italic = family == Family::Serif && target.italic_angle < 0.0;
@@ -414,11 +412,7 @@ pub fn standard_font_data_files(font: StandardFont) -> Vec<&'static str> {
 /// or to find its missing glyphs (see `set_data`).
 pub fn font_data_files(family: Family, options: &Options) -> Vec<&'static str> {
     // Resolve the style without loading data to measure stem weight.
-    let options_without_stem = Options {
-        stem_v: None,
-        ..options.clone()
-    };
-    let target = target_of(family, &options_without_stem);
+    let target = target_of(options);
     // missing_glyphs uses the regular style.
     let mut files = vec![
         base_file(family, &target).0,
@@ -447,17 +441,16 @@ pub struct GeneratedFont {
 
 /// Adds fallback sources when canonical resolution from the primary source
 /// is incomplete. Glyph outlines remain lazily decoded.
-fn with_fallbacks(
+fn with_fallbacks<'a>(
     primary: &'static GlyphData,
     fallbacks: impl IntoIterator<Item = &'static GlyphDataFile>,
-    texts: &[&[u32]],
+    texts: impl IntoIterator<Item = &'a [u32]>,
 ) -> Vec<&'static GlyphData> {
     let mut sources = vec![primary];
-    // Only with the canonical forms: the fallbacks may have the codepoints of
-    // the compatibility forms (e.g. "①" for "1").
+    // Try fallbacks before compatibility substitutions (e.g. "1" for "①").
     let resolver = unicode::Resolver::canonical(&sources, unicode_tables());
     let complete = texts
-        .iter()
+        .into_iter()
         .all(|text| text.is_empty() || !resolver.resolve(text).is_empty());
     if !complete {
         sources.extend(fallbacks.into_iter().map(GlyphDataFile::get));
@@ -479,23 +472,17 @@ fn standard_fallbacks(font: StandardFont) -> impl Iterator<Item = &'static Glyph
         .chain([&SYMBOLS])
 }
 
-fn texts_of(glyphs: &[Request]) -> Vec<&[u32]> {
-    glyphs.iter().map(|glyph| &glyph.unicode[..]).collect()
+fn texts_of(glyphs: &[Request]) -> impl Iterator<Item = &[u32]> {
+    glyphs.iter().map(|glyph| glyph.unicode.as_slice())
 }
 
-/// The style requested by the options.
-fn target_of(family: Family, options: &Options) -> Target {
-    let mut weight = match options.weight {
+/// The style requested by the options, before matching stem widths.
+fn target_of(options: &Options) -> Target {
+    let weight = match options.weight {
         Some(weight) if weight > 0.0 => weight,
         _ if options.bold => BOLD_WEIGHT,
         _ => DEFAULT_WEIGHT,
     };
-    // The weight of the expected stems, with the stems of the regular style.
-    if let Some(stem_v) = options.stem_v.filter(|&stem_v| stem_v > 0.0) {
-        let regular = glyph_data(family);
-        let stem = (stem_v * regular.units_per_em as f64) / options.width_units();
-        weight = style::weight_of_stem(regular, stem).unwrap_or(weight);
-    }
     let mut italic_angle = (options.italic_angle)
         .filter(|angle| angle.is_finite())
         .unwrap_or(0.0);
@@ -512,16 +499,26 @@ fn target_of(family: Family, options: &Options) -> Target {
 /// the style of the family closest to the requested one (see `Family`), or
 /// else from the symbols, the rest of the style being synthesized.
 pub fn generate_font(family: Family, glyphs: &[Request], options: &Options) -> GeneratedFont {
-    let target = target_of(family, options);
+    let mut target = target_of(options);
+    // Infer weight from the regular style's stem measurements.
+    if let Some(stem_v) = options.stem_v.filter(|&stem_v| stem_v > 0.0) {
+        let regular = glyph_data(family);
+        let stem = (stem_v * regular.units_per_em as f64) / options.width_units();
+        target.weight = clamp(
+            style::weight_of_stem(regular, stem).unwrap_or(target.weight),
+            1.0,
+            1000.0,
+        );
+    }
     let (base, base_italic_angle) = base_file(family, &target);
     let base = base.get();
-    let sources = with_fallbacks(base, [&SYMBOLS], &texts_of(glyphs));
+    let sources = with_fallbacks(base, [&SYMBOLS], texts_of(glyphs));
     let units_per_em = base.units_per_em as f64;
     let cap_height = (options.cap_height)
         .filter(|&cap_height| cap_height > 0.0)
         .map(|cap_height| (cap_height * units_per_em) / options.width_units());
     let mut style = style::font_style(&sources, base_italic_angle, &target, cap_height, true);
-    // The expected stems are the ones of the font, whatever its scale.
+    // Explicit stem widths are independent of the font's horizontal scale.
     style.scaled_stems = !options.stem_v.is_some_and(|stem_v| stem_v > 0.0);
     let (data, missing) =
         font_builder::build_font(&sources, &style, unicode_tables(), glyphs, options);
@@ -539,7 +536,7 @@ pub fn generate_standard_font(
 ) -> GeneratedFont {
     let (family, target) = font.style();
     let (base, base_italic_angle) = standard_file(font);
-    let sources = with_fallbacks(base.get(), standard_fallbacks(font), &texts_of(glyphs));
+    let sources = with_fallbacks(base.get(), standard_fallbacks(font), texts_of(glyphs));
     let style = style::font_style(&sources, base_italic_angle, &target, None, family.is_some());
     let (data, missing) =
         font_builder::build_font(&sources, &style, unicode_tables(), glyphs, options);
@@ -553,7 +550,7 @@ fn missing_texts(
     fallbacks: impl IntoIterator<Item = &'static GlyphDataFile>,
     texts: &[&[u32]],
 ) -> Vec<usize> {
-    let sources = with_fallbacks(primary, fallbacks, texts);
+    let sources = with_fallbacks(primary, fallbacks, texts.iter().copied());
     let resolver = unicode::Resolver::new(&sources, unicode_tables());
     texts
         .iter()

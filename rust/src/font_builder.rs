@@ -7,9 +7,9 @@
 //! Each glyph is horizontally scaled to fit the expected advance width, its
 //! stems getting the scale of the font (see `font_scale`), and possibly
 //! emboldened (or thinned) and slanted, to synthesize a style (see
-//! `style.rs`). There is no hinting. Lengths use `sqrt` and the slant is
-//! rounded to 16.16, rather than `hypot` and the raw `tan`, which differ
-//! between platforms: the fonts are the same everywhere.
+//! `style.rs`). There is no hinting. Lengths use `sqrt`; the slant is rounded
+//! to 16.16: `hypot` and `tan` differ between platforms, and the fonts must be
+//! the same everywhere. Snapshots check the resulting font bytes.
 
 use crate::glyph_data::{sort_by_code, GlyphData, Outline};
 use crate::outline;
@@ -319,9 +319,7 @@ fn font_scale(
     to_font_units: impl Fn(f64) -> f64,
 ) -> f64 {
     let upm = sources[0].units_per_em as f64;
-    // The bits of positive numbers sort like them: the sort of the cmap and
-    // the kerning pairs is reused (another one would make the wasm module
-    // bigger).
+    // Positive finite floats sort by their bits, allowing sort_by_code reuse.
     let mut scales: Vec<(u64, usize)> = Vec::new();
     for (request, glyphs) in requests.iter().zip(resolved) {
         let Some(width) = request.width.filter(|&width| width > 0.0) else {

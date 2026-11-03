@@ -7,16 +7,16 @@
 # $OUTPUT/$OUTPUT_NAME.js and $OUTPUT/${OUTPUT_NAME}_bg.wasm; defaults below.
 # EMBEDDED_DATA=0 copies data files to $OUTPUT for runtime loading.
 #
-# JS_FALLBACK=1 writes ${OUTPUT_NAME}_nowasm_fallback.js using wasm2js and
-# terser. It uses the js-fallback profile, the same glue (via initJs) and data.
-# Binaryen tools come from $BINARYEN (otherwise PATH); terser from $TERSER
-# (otherwise PATH).
+# JS_FALLBACK=1 builds the js-fallback profile with wasm2js and terser,
+# sharing glue (via initJs) and runtime data with wasm.
+# BINARYEN selects the tools directory; TERSER selects the minifier.
+# Both default to PATH lookups.
 set -e
 
-OUTPUT=${OUTPUT:=.}
-OUTPUT_NAME=${OUTPUT_NAME:=hellbox}
-EMBEDDED_DATA=${EMBEDDED_DATA:=1}
-JS_FALLBACK=${JS_FALLBACK:=0}
+OUTPUT=${OUTPUT:-.}
+OUTPUT_NAME=${OUTPUT_NAME:-hellbox}
+EMBEDDED_DATA=${EMBEDDED_DATA:-1}
+JS_FALLBACK=${JS_FALLBACK:-0}
 
 set --
 if [ "${EMBEDDED_DATA}" = 0 ]; then
@@ -28,8 +28,7 @@ if [ "${JS_FALLBACK}" = 1 ]; then
     echo "The JS version needs the data files outside the module (EMBEDDED_DATA=0)." >&2
     exit 1
   fi
-  # Disable reference types and multivalue for wasm2js, including in the
-  # linker's feature list passed to wasm-bindgen.
+  # Disable reference types and multivalue for wasm2js, including linker metadata.
   RUSTFLAGS="${RUSTFLAGS} -C target-feature=-reference-types,-multivalue \
     -C link-arg=--no-check-features \
     -C link-arg=--features=mutable-globals,sign-ext,nontrapping-fptoint,bulk-memory"
@@ -103,6 +102,5 @@ EOF
 fi
 
 sed -i "1 i\/* THIS FILE IS GENERATED - DO NOT EDIT */" "${OUTPUT}/${OUTPUT_NAME}.js"
-# wasm-pack ignores everything in its output directory, which can be the one
-# of the module in pdf.js.
+# Remove wasm-pack's generated ignore file so output can be tracked.
 rm -f "${OUTPUT}/.gitignore"

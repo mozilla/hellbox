@@ -12,8 +12,8 @@ use crate::payload;
 use crate::Error;
 use std::sync::{Mutex, MutexGuard};
 
-/// Stable sort by packed code: the cmaps, the kerning pairs and the scales
-/// share it, the sort being big (generic code is compiled for each type).
+/// Shared stable sort for cmap entries, kerning pairs and scale bits: the
+/// generic sort is big, and each element type would add a copy to the module.
 pub(crate) fn sort_by_code(entries: &mut [(u64, usize)]) {
     entries.sort_by_key(|&(code, _)| code);
 }
@@ -152,10 +152,8 @@ impl GlyphData {
         }
     }
 
-    /// Parses a glyph data file, whose glyphs are decoded when they're needed
-    /// (see `prepare`). Embedded family files put the glyphs of the 8-bit
-    /// encodings first (pdf.js requests every character of a font's
-    /// encoding), allowing requests for those glyphs to decode a prefix.
+    /// Parses a file, decoding glyphs on demand (see `prepare`). Family files
+    /// put 8-bit encoding glyphs first so they can be decoded as a prefix.
     pub fn lazy(bytes: &'static [u8]) -> Result<Self, Error> {
         match Self::compression(bytes)? {
             #[cfg(feature = "encoder")]
@@ -296,13 +294,9 @@ impl GlyphData {
         drop(self.decoded(gids));
     }
 
-    /// The decoded glyphs, with some glyphs and their components. The
-    /// decoding restarts from the first glyph (the decoder's state is big),
-    /// up to the last needed one, and at least twice as far as before, so
-    /// that a few restarts decode everything. Beyond half of the glyphs, all
-    /// of them are decoded: the glyphs only used as components are the last
-    /// ones (except those of the first glyphs), the composites needing them
-    /// would need another restart.
+    /// Decodes requested glyphs and their components. Each restart decodes
+    /// from the beginning, at least doubling the prefix. Beyond half of the
+    /// glyphs, decodes the whole file, including trailing component glyphs.
     fn decoded(&self, gids: &[usize]) -> MutexGuard<'_, Glyphs> {
         let mut glyphs = self.glyphs.lock().unwrap();
         let Some(coded) = self.coded else {

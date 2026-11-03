@@ -16,9 +16,12 @@
 
 #![cfg(feature = "embedded-data")]
 
+mod common;
+
+use common::{text_requests as text, Source};
 use hellbox::{
-    generate_font, generate_standard_font, standard_glyph_data, style_glyph_data,
-    symbols_glyph_data, Family, GlyphData, Options, Request, StandardFont,
+    standard_glyph_data, style_glyph_data, symbols_glyph_data, Family, GlyphData, Options, Request,
+    StandardFont,
 };
 use std::fs;
 use std::path::Path;
@@ -168,13 +171,6 @@ fn decodes_the_glyph_data() {
     );
 }
 
-/// The glyph data of a font.
-#[derive(Clone, Copy)]
-enum Source {
-    Family(Family),
-    Standard(StandardFont),
-}
-
 struct Case {
     name: &'static str,
     source: Source,
@@ -188,22 +184,6 @@ fn request(unicode: &[u32], width: Option<f64>, char_code: Option<u32>) -> Reque
         width,
         char_code,
     }
-}
-
-/// The requests for the distinct characters of a text (in order, the spaces
-/// included), the i-th one having the width `width(i)`.
-fn text(text: &str, width: impl Fn(usize) -> Option<f64>) -> Vec<Request> {
-    let mut chars: Vec<char> = Vec::new();
-    for c in text.chars() {
-        if !chars.contains(&c) {
-            chars.push(c);
-        }
-    }
-    chars
-        .iter()
-        .enumerate()
-        .map(|(i, &c)| request(&[c as u32], width(i), None))
-        .collect()
 }
 
 fn cases() -> Vec<Case> {
@@ -393,12 +373,7 @@ fn generates_the_fonts() {
     let lines: Vec<String> = cases()
         .iter()
         .map(|case| {
-            let font = match case.source {
-                Source::Family(family) => generate_font(family, &case.requests, &case.options),
-                Source::Standard(font) => {
-                    generate_standard_font(font, &case.requests, &case.options)
-                }
-            };
+            let font = case.source.generate(&case.requests, &case.options);
             if let Some(dir) = &output {
                 fs::write(format!("{dir}/{}.ttf", case.name), &font.data).unwrap();
             }
