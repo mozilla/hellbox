@@ -26,30 +26,6 @@ use crate::range_decoder::{BitModels, RangeDecoder, MAX_DIRECT_BITS};
 use crate::Error;
 #[cfg(target_arch = "wasm32")]
 use std::cell::Cell;
-use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
-
-/// A non-cryptographic hasher for integer keys.
-#[derive(Default)]
-pub(crate) struct IntHasher(u64);
-
-impl Hasher for IntHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u64(b as u64);
-        }
-    }
-
-    fn write_u64(&mut self, v: u64) {
-        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517c_c1b7_2722_0a95);
-    }
-}
-
-pub(crate) type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
 
 pub(crate) const FIXED_HEADER_SIZE: usize = 28;
 pub(crate) const NUM_STRINGS: usize = 5;
@@ -744,7 +720,9 @@ pub(crate) struct ContourEntry {
 }
 
 /// Entries in last-use order, with rank 0 for the most recent. A Fenwick tree
-/// counts occupied slots for rank lookups. Full slot arrays are compacted.
+/// counts occupied slots for rank lookups. Slots are allocated on first
+/// insertion and compacted when full.
+#[derive(Default)]
 pub(crate) struct RecencyList {
     slots: Vec<Option<usize>>,
     tree: Vec<i32>,
@@ -757,16 +735,6 @@ pub(crate) struct RecencyList {
 const RECENCY_CAPACITY: usize = 16;
 
 impl RecencyList {
-    fn new() -> Self {
-        RecencyList {
-            slots: vec![None; RECENCY_CAPACITY],
-            tree: vec![0; RECENCY_CAPACITY + 1],
-            capacity: RECENCY_CAPACITY,
-            next: 0,
-            length: 0,
-        }
-    }
-
     #[allow(clippy::manual_isolate_lowest_one)]
     fn add(&mut self, slot: usize, delta: i32) {
         let mut i = slot + 1;
@@ -842,6 +810,14 @@ impl RecencyList {
         }
         self.slots.get(pos).copied().flatten()
     }
+}
+
+/// Contour list indexed by point count, created on demand.
+fn list_mut(lists: &mut Vec<RecencyList>, n: usize) -> &mut RecencyList {
+    if n >= lists.len() {
+        lists.resize_with(n + 1, RecencyList::default);
+    }
+    &mut lists[n]
 }
 
 /// State of the outline being coded.
@@ -1093,10 +1069,10 @@ pub(crate) struct Model {
     last_base_gid: i64,
     prediction_hit: BitModels,
     symmetry_hit: BitModels,
-    /// The contour dictionary: the entries, and their lists by number of
-    /// points.
+    /// Contour dictionary.
     pub entries: Vec<ContourEntry>,
-    pub lists: IntMap<u64, RecencyList>,
+    /// Recency lists indexed by point count.
+    pub lists: Vec<RecencyList>,
     prev_glyph_entries: Vec<usize>,
     glyph_index: i64,
     history: PointHistory,
@@ -1111,6 +1087,11 @@ impl Model {
     #[cfg(feature = "encoder")]
     pub(crate) fn new() -> Self {
         Self::with_glyph_models(true)
+    }
+
+    /// Contour entries with `n` points.
+    pub(crate) fn list(&self, n: u64) -> Option<&RecencyList> {
+        self.lists.get(usize::try_from(n).ok()?)
     }
 
     /// A model whose models of the glyphs are empty when they aren't needed
@@ -1160,7 +1141,7 @@ impl Model {
             prediction_hit: BitModels::new(n(MAX_ORDER * 8 * 2)),
             symmetry_hit: BitModels::new(n(SYMMETRIES.len() * 2 * 2 * 2)),
             entries: Vec::new(),
-            lists: IntMap::default(),
+            lists: Vec::new(),
             prev_glyph_entries: Vec::new(),
             glyph_index: 0,
             history: PointHistory::empty(),
@@ -1411,7 +1392,6 @@ impl Model {
             all_y.extend_from_slice(&contour.y);
 
             // Update the dictionary.
-            let list_key = n as u64;
             let (previous_glyph, old_x, old_y) = match contour.entry {
                 Some(e) if contour.mode != MODE_NEW => (
                     self.entries[e].last_glyph,
@@ -1439,17 +1419,11 @@ impl Model {
                     slot: 0,
                 });
                 hooks.add_entry(self, id);
-                self.lists
-                    .entry(list_key)
-                    .or_insert_with(RecencyList::new)
-                    .push(id, &mut self.entries);
+                list_mut(&mut self.lists, n).push(id, &mut self.entries);
                 id
             } else {
                 let id = contour.entry.ok_or(Error::InvalidData)?;
-                self.lists
-                    .entry(list_key)
-                    .or_insert_with(RecencyList::new)
-                    .move_to_end(id, &mut self.entries);
+                list_mut(&mut self.lists, n).move_to_end(id, &mut self.entries);
                 id
             };
             hooks.touch_entry(self, new_entry);
@@ -1679,7 +1653,7 @@ impl Model {
             let n = self.counts.code(c, count_ctx, given) + 1;
             let given = decision.map_or(0, |d| d.rank as u64);
             let rank = self.rank.code(c, (n >> 2).min(3) as usize, given);
-            let list = self.lists.get(&n).ok_or(Error::InvalidData)?;
+            let list = self.list(n).ok_or(Error::InvalidData)?;
             if rank >= list.length as u64 {
                 return Err(Error::InvalidData);
             }
@@ -1694,7 +1668,7 @@ impl Model {
 
         // Optional blending with a second entry with the same topology (e.g.
         // an interpolation between a short and a long version of a stroke).
-        let same_size_length = self.lists.get(&(n as u64)).map_or(0, |l| l.length);
+        let same_size_length = self.list(n as u64).map_or(0, |l| l.length);
         let mut partner = None;
         let mut bx = 0;
         let mut by = 0;
@@ -1706,16 +1680,12 @@ impl Model {
                 u32::from(given_partner.is_some()),
             ) != 0
         {
-            let given = given_partner.map_or(0, |p| {
-                self.lists[&(n as u64)].rank_of(&self.entries[p]) as u64
-            });
+            let given = given_partner.map_or(0, |p| self.lists[n].rank_of(&self.entries[p]) as u64);
             let rank = self.rank.code(c, 4 + size_class, given);
             if rank >= same_size_length as u64 {
                 return Err(Error::InvalidData);
             }
-            let p = self.lists[&(n as u64)]
-                .at(rank as usize)
-                .ok_or(Error::InvalidData)?;
+            let p = self.lists[n].at(rank as usize).ok_or(Error::InvalidData)?;
             if p == entry || self.entries[p].on != self.entries[entry].on {
                 return Err(Error::InvalidData);
             }

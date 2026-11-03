@@ -12,6 +12,8 @@ use hellbox::{
     generate_font, generate_standard_font, glyph_data, standard_glyph_data, symbols_glyph_data,
     Family, GlyphData, Kerning, Options, Request, StandardFont,
 };
+use skrifa::raw::tables::cmap::Cmap;
+use skrifa::raw::{FontData, FontRead, FontRef};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,67 +26,26 @@ const TEXT: &str = "The quick brown fox jumps over the lazy dog 0123456789 ÀÉ�
 
 /// The tables of a font file, by tag.
 fn tables(font: &[u8]) -> BTreeMap<String, &[u8]> {
-    let u16_at = |pos: usize| u16::from_be_bytes([font[pos], font[pos + 1]]) as usize;
-    let u32_at = |pos: usize| u32::from_be_bytes(font[pos..pos + 4].try_into().unwrap()) as usize;
-    (0..u16_at(4))
-        .map(|i| {
-            let record = 12 + 16 * i;
-            let tag = String::from_utf8_lossy(&font[record..record + 4]).into_owned();
-            let offset = u32_at(record + 8);
-            (tag, &font[offset..offset + u32_at(record + 12)])
+    let font = FontRef::new(font).unwrap();
+    font.table_directory()
+        .table_records()
+        .iter()
+        .map(|record| {
+            let tag = record.tag.get();
+            (tag.to_string(), font.table_data(tag).unwrap().as_bytes())
         })
         .collect()
 }
 
-/// The mapping of a cmap table: its (3, 10) subtable if any, else its (3, 1)
-/// one.
+/// The selected cmap subtable, excluding .notdef.
 fn cmap(table: &[u8]) -> BTreeMap<u32, u32> {
-    let u16_at = |pos: usize| u16::from_be_bytes([table[pos], table[pos + 1]]);
-    let u32_at = |pos: usize| u32::from_be_bytes(table[pos..pos + 4].try_into().unwrap());
-    let subtable = |platform, encoding| {
-        (0..u16_at(2) as usize)
-            .map(|i| 4 + 8 * i)
-            .find(|&record| u16_at(record) == platform && u16_at(record + 2) == encoding)
-            .map(|record| u32_at(record + 4) as usize)
-    };
-    let mut mapping = BTreeMap::new();
-    if let Some(offset) = subtable(3, 10) {
-        assert_eq!(u16_at(offset), 12, "cmap (3, 10) format");
-        for i in 0..u32_at(offset + 12) as usize {
-            let group = offset + 16 + 12 * i;
-            let start = u32_at(group);
-            for code in start..=u32_at(group + 4) {
-                mapping.insert(code, u32_at(group + 8) + code - start);
-            }
-        }
-        return mapping;
-    }
-    let offset = subtable(3, 1).expect("no Unicode cmap");
-    assert_eq!(u16_at(offset), 4, "cmap (3, 1) format");
-    let segments = u16_at(offset + 6) as usize / 2;
-    let ends = offset + 14;
-    let starts = ends + 2 * segments + 2;
-    let deltas = starts + 2 * segments;
-    let range_offsets = deltas + 2 * segments;
-    for i in 0..segments {
-        let start = u16_at(starts + 2 * i);
-        let delta = u16_at(deltas + 2 * i);
-        let range_offset = u16_at(range_offsets + 2 * i) as usize;
-        for code in start..=u16_at(ends + 2 * i) {
-            let gid = if range_offset == 0 {
-                code.wrapping_add(delta)
-            } else {
-                match u16_at(range_offsets + 2 * i + range_offset + 2 * (code - start) as usize) {
-                    0 => 0,
-                    gid => gid.wrapping_add(delta),
-                }
-            };
-            if gid != 0 {
-                mapping.insert(code as u32, gid as u32);
-            }
-        }
-    }
-    mapping
+    let cmap = Cmap::read(FontData::new(table)).unwrap();
+    let (_, _, subtable) = cmap.best_subtable().unwrap();
+    subtable
+        .iter()
+        .map(|(code, gid)| (code, gid.to_u32()))
+        .filter(|&(_, gid)| gid != 0)
+        .collect()
 }
 
 /// Writes a font in `target/tmp/ots/`, to examine it when it fails (e.g.

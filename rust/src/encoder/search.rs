@@ -1017,7 +1017,7 @@ impl Hooks for Encoder {
 
         let mut best = Decision::default();
         let mut best_cost = Self::cost(model, contour, &best, state);
-        if model.lists.get(&(n as u64)).is_none_or(|l| l.length == 0) {
+        if model.list(n as u64).is_none_or(|l| l.length == 0) {
             return best;
         }
         let uses = self.uses.get(&n).copied().unwrap_or(0);
@@ -1145,7 +1145,7 @@ impl Hooks for Encoder {
             references.push((b.entry, 0.0, 0.0, 0.0, 0.0, Some(b.partner), b.bx, b.by));
         }
         for (entry, kx, ky, hx, hy, partner, bx, by) in references {
-            let rank = model.lists[&(n as u64)].rank_of(&model.entries[entry]);
+            let rank = model.lists[n].rank_of(&model.entries[entry]);
             let decision = Decision {
                 mode: MODE_REF,
                 entry: Some(entry),

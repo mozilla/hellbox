@@ -394,8 +394,8 @@ pub fn build_font(
         outline: None,
         advance: (upm / 2.0).round() as u16,
     });
-    let mut cmap: Vec<(u32, usize)> = Vec::new();
-    let mut mapped = std::collections::HashSet::new();
+    // Use u64 keys to reuse sort_by_code.
+    let mut cmap: Vec<(u64, usize)> = Vec::new();
     // The glyphs of the requests, which are decoded together (see
     // `GlyphData::prepare`).
     let resolved: Vec<Vec<(usize, usize)>> = requests
@@ -440,9 +440,7 @@ pub fn build_font(
             .char_code
             .or_else(|| request.unicode.first().copied())
         {
-            if mapped.insert(code) {
-                cmap.push((code, i + 1));
-            }
+            cmap.push((u64::from(code), i + 1));
         }
 
         let mut natural_advance = 0.0;
@@ -578,6 +576,13 @@ pub fn build_font(
     }
     missing.extend(count..count + excess);
 
+    // Stable sorting preserves the first mapping of each code.
+    sort_by_code(&mut cmap);
+    cmap.dedup_by_key(|entry| entry.0);
+    let cmap: Vec<(u32, usize)> = cmap
+        .into_iter()
+        .map(|(code, gid)| (code as u32, gid))
+        .collect();
     // The glyph id of the requests mapped in the cmap (0 for the other ones).
     let mut request_gids = vec![0; requests.len()];
     for &(_, gid) in &cmap {
@@ -826,20 +831,6 @@ fn sort_by_code(entries: &mut [(u64, usize)]) {
     entries.sort_by_key(|&(code, _)| code);
 }
 
-/// Valid cmap mappings, sorted by code.
-fn cmap_entries(cmap: &[(u32, usize)]) -> Vec<(u32, usize)> {
-    let mut entries: Vec<(u64, usize)> = cmap
-        .iter()
-        .filter(|&&(code, _)| code <= 0x10ffff)
-        .map(|&(code, gid)| (code as u64, gid))
-        .collect();
-    sort_by_code(&mut entries);
-    entries
-        .into_iter()
-        .map(|(code, gid)| (code as u32, gid))
-        .collect()
-}
-
 /// Groups of consecutive codes mapped to consecutive glyphs.
 fn cmap_groups(entries: &[(u32, usize)]) -> Vec<(u32, u32, usize)> {
     let mut groups: Vec<(u32, u32, usize)> = Vec::new();
@@ -923,8 +914,9 @@ fn write_cmap_table(records: &[(u16, u16, usize)], subtables: &[Vec<u8>]) -> Vec
     w.bytes
 }
 
+/// Requires mappings sorted by code; omits codes above U+10FFFF.
 fn write_cmap(cmap: &[(u32, usize)]) -> Vec<u8> {
-    let groups = cmap_groups(&cmap_entries(cmap));
+    let groups = cmap_groups(&cmap[..cmap.partition_point(|&(code, _)| code <= 0x10ffff)]);
 
     // Format 4, for the BMP: with too many segments only the first ones are
     // kept and format 12 has all of them.
@@ -1022,6 +1014,7 @@ fn write_kern(pairs: &[(u32, usize)]) -> Vec<u8> {
     w.bytes
 }
 
+/// Requires a cmap sorted by code with no duplicates.
 fn write_font(
     glyphs: &[OutGlyph],
     cmap: &[(u32, usize)],

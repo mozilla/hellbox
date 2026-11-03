@@ -11,8 +11,6 @@
 
 use crate::glyph_data::GlyphData;
 use crate::Error;
-use std::cell::OnceCell;
-use std::collections::HashMap;
 
 /// Normalization forms of single codepoints.
 pub struct UnicodeTables {
@@ -22,6 +20,8 @@ pub struct UnicodeTables {
     /// Sorted by codepoint: (codepoint, NFD, NFKD), the forms having several
     /// codepoints (empty when there's none, or when NFKD is NFD).
     decompositions: Vec<(u32, Vec<u32>, Vec<u32>)>,
+    /// First NFD codepoints, or u32::MAX for empty NFDs.
+    nfd_starts: Vec<u32>,
     /// The ligatures (sorted, with a decomposition): a text with the
     /// compatibility decomposition of one of them is rendered with its glyph.
     ligatures: Vec<u32>,
@@ -72,9 +72,14 @@ impl UnicodeTables {
             cp += varint(bytes, &mut pos)?;
             ligatures.push(cp);
         }
+        let nfd_starts = decompositions
+            .iter()
+            .map(|(_, nfd, _)| nfd.first().copied().unwrap_or(u32::MAX))
+            .collect();
         Ok(UnicodeTables {
             singletons,
             decompositions,
+            nfd_starts,
             ligatures,
         })
     }
@@ -102,9 +107,6 @@ pub type GlyphRef = (usize, usize);
 pub struct Resolver<'a> {
     sources: &'a [&'a GlyphData],
     tables: &'a UnicodeTables,
-    /// Canonical decompositions and ligatures of the supported codepoints
-    /// (see `compositions`).
-    compositions: OnceCell<HashMap<Vec<u32>, u32>>,
     /// The compatibility forms (NFKC, NFKD) of the codepoints are used too
     /// (e.g. "1" for "①").
     compatibility: bool,
@@ -129,34 +131,29 @@ impl<'a> Resolver<'a> {
         Resolver {
             sources,
             tables,
-            compositions: OnceCell::new(),
             compatibility,
         }
     }
 
-    /// The compositions, built when a text needs them: most texts are single
-    /// codepoints of the glyph data.
-    fn compositions(&self) -> &HashMap<Vec<u32>, u32> {
-        self.compositions.get_or_init(|| {
-            let tables = self.tables;
-            let mut compositions = HashMap::new();
-            // NFC compositions: the supported codepoints, from their NFD.
-            for (cp, nfd, _) in &tables.decompositions {
-                if !nfd.is_empty() && self.find(*cp).is_some() {
-                    compositions.entry(nfd.clone()).or_insert(*cp);
-                }
-            }
-            // Supported ligatures override matching decompositions; later
-            // entries win.
-            for &cp in &tables.ligatures {
-                if self.find(cp).is_some() {
-                    if let Some((nfd, nfkd)) = tables.decomposition(cp) {
-                        let form = if nfkd.is_empty() { nfd } else { nfkd };
-                        compositions.insert(form.to_vec(), cp);
-                    }
-                }
-            }
-            compositions
+    /// Prefer the last supported ligature, then the first supported NFD match.
+    fn composition(&self, text: &[u32]) -> Option<u32> {
+        let tables = self.tables;
+        let first = *text.first()?;
+        let ligature = tables.ligatures.iter().rev().copied().find(|&cp| {
+            tables
+                .decomposition(cp)
+                .is_some_and(|(nfd, nfkd)| (if nfkd.is_empty() { nfd } else { nfkd }) == text)
+                && self.find(cp).is_some()
+        });
+        ligature.or_else(|| {
+            tables
+                .nfd_starts
+                .iter()
+                .zip(&tables.decompositions)
+                .find(|&(&start, (cp, nfd, _))| {
+                    start == first && nfd[..] == *text && self.find(*cp).is_some()
+                })
+                .map(|(_, &(cp, _, _))| cp)
         })
     }
 
@@ -217,7 +214,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn ligature(&self, text: &[u32]) -> Option<GlyphRef> {
-        let cp = *self.compositions().get(text)?;
+        let cp = self.composition(text)?;
         (self.tables.ligatures.binary_search(&cp).is_ok())
             .then(|| self.find(cp))
             .flatten()
@@ -228,7 +225,7 @@ impl<'a> Resolver<'a> {
     /// it can't be rendered.
     pub fn resolve(&self, text: &[u32]) -> Vec<GlyphRef> {
         if text.len() > 1 {
-            if let Some(glyph) = self.compositions().get(text).and_then(|&cp| self.find(cp)) {
+            if let Some(glyph) = self.composition(text).and_then(|cp| self.find(cp)) {
                 return vec![glyph];
             }
         }
