@@ -91,12 +91,8 @@ const { default: instantiate } = await import("./hellbox_nowasm_fallback.js");
 initJs(instantiate); // Instead of initSync: the other functions are the same.
 ```
 
-Four optional last arguments of `generate_font` (and of
-`generate_standard_font`), e.g. for a text layer:
+Three optional last arguments of `generate_font` and `generate_standard_font`:
 
-- `metricsOnly` (`false` by default) generates glyphs without outlines: the
-  smallest font with the advances (less than 1 KB for a text), the glyphs
-  having the same advance sharing a glyph id (the cmap gives them),
 - `ascent`, the ascent as a fraction of the em: the descent is the rest,
   without line gap (the lines are an em high),
 - `kerning`, a `Float64Array` of triples (index of the left glyph, index of the
@@ -104,7 +100,7 @@ Four optional last arguments of `generate_font` (and of
   table,
 - `debugBoxes` (`false` by default), for debugging: each glyph with an advance
   is the outline (1/32 em thick, inside) of a rectangle covering it, from the
-  descender to the ascender (e.g. to see the glyphs of a `metricsOnly` font).
+  descender to the ascender.
 
 The text of a glyph is usually a single codepoint, but it can be a ligature
 (`ffi` gives U+FB03) or a letter followed by combining marks (which are
@@ -286,15 +282,14 @@ the same everywhere: changing it changes the fonts (see the snapshots).
 per style in a document), and `benches/fonts.rs` the generation of the fonts
 from decoded data: a text and the Latin-1 glyphs in each style (embedded or
 synthesized), all the glyphs of the families and of some standard fonts, the
-fallbacks (symbols, sequences, normalized forms), the fonts of a text layer
-(with kerning, debug boxes, or a CJK text), and the lookup of the missing
+fallbacks (symbols, sequences, normalized forms), and the lookup of the missing
 glyphs. They use [divan](https://docs.rs/divan), through the compatibility
 layer of [CodSpeed](https://codspeed.io), which measures them (simulated CPU,
 deterministic) to catch the regressions:
 
 ```sh
 cargo bench  # The times of the native code (the wasm module is slower).
-cargo bench --bench fonts -- text_layer  # The benchmarks matching a filter.
+cargo bench --bench fonts -- standard_font  # The benchmarks matching a filter.
 
 # With CodSpeed (cargo install cargo-codspeed, codspeed auth login):
 cargo codspeed build -m simulation

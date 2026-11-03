@@ -8,7 +8,7 @@
 use divan::{black_box, Bencher};
 use hellbox::{
     generate_font, generate_standard_font, glyph_data, missing_glyphs, standard_glyph_data, Family,
-    Kerning, Options, Request, StandardFont,
+    Options, Request, StandardFont,
 };
 
 fn main() {
@@ -166,55 +166,6 @@ fn standard_font(bencher: Bencher, font: StandardFont) {
     let options = Options::default();
     generate_standard_font(font, &requests, &options);
     bencher.bench(|| generate_standard_font(font, black_box(&requests), black_box(&options)));
-}
-
-/// The fonts of a text layer, without outlines.
-#[derive(Clone, Copy, Debug)]
-enum TextLayer {
-    Latin1,
-    Kerning,
-    DebugBoxes,
-    /// Codepoints which aren't in the glyph data (e.g. a CJK text).
-    Cjk,
-}
-
-#[divan::bench(args = [
-    TextLayer::Latin1,
-    TextLayer::Kerning,
-    TextLayer::DebugBoxes,
-    TextLayer::Cjk,
-])]
-fn text_layer(bencher: Bencher, case: TextLayer) {
-    let mut options = Options {
-        metrics_only: true,
-        ascent: Some(0.8),
-        ..Options::default()
-    };
-    let requests = match case {
-        TextLayer::Cjk => (0x4e00..0x4e00 + 5000)
-            .map(|cp| Request {
-                unicode: vec![cp],
-                width: Some(1000.0),
-                char_code: None,
-            })
-            .collect(),
-        _ => requests(latin_1()),
-    };
-    match case {
-        // 1000 pairs of the first 32 glyphs.
-        TextLayer::Kerning => {
-            options.kerning = (0..1000)
-                .map(|i| Kerning {
-                    left: i / 32,
-                    right: i % 32,
-                    value: -5.0 - (i % 50) as f64,
-                })
-                .collect();
-        }
-        TextLayer::DebugBoxes => options.debug_boxes = true,
-        _ => {}
-    }
-    bench_font(bencher, Family::Sans, &requests, &options);
 }
 
 /// The lookup of the glyphs which can't be rendered: Latin-1, symbols, and a

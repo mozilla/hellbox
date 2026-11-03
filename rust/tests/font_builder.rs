@@ -521,66 +521,8 @@ fn supports_supplementary_codes() {
 }
 
 #[test]
-fn generates_fonts_without_outlines() {
-    // Natural widths (emboldened) and given ones, some of them equal, and
-    // dense glyphs with natural widths (their emboldening depends on their
-    // outlines, see `density_factor`).
-    let mut requests: Vec<Request> = "Hamburgefonstiv ffi"
-        .chars()
-        .enumerate()
-        .map(|(i, c)| request(&c.to_string(), (i % 3 != 0).then_some(500.0), None))
-        .collect();
-    requests.extend(
-        "@%&WMm‰"
-            .chars()
-            .map(|c| request(&c.to_string(), None, None)),
-    );
-    // The bold style, and a weight emboldening it.
-    for options in [
-        Options {
-            bold: true,
-            ..Options::default()
-        },
-        Options {
-            weight: Some(900.0),
-            ..Options::default()
-        },
-    ] {
-        let full = generate_font(Family::Serif, &requests, &options);
-        let generated = generate_font(
-            Family::Serif,
-            &requests,
-            &Options {
-                metrics_only: true,
-                ..options
-            },
-        );
-        assert_eq!(generated.missing, full.missing);
-        let (font, full_font) = (read(&generated.data), read(&full.data));
-        assert!(font.glyphs.iter().all(|glyph| glyph.is_empty()));
-        // The same advances, with a glyph per advance (and .notdef).
-        let advance = |font: &Font, code| font.advances[font.cmap[&code] as usize];
-        assert_eq!(
-            font.cmap.keys().collect::<Vec<_>>(),
-            full_font.cmap.keys().collect::<Vec<_>>()
-        );
-        for &code in full_font.cmap.keys() {
-            assert_eq!(advance(&font, code), advance(&full_font, code), "{code}");
-        }
-        let mut advances: Vec<u16> = (full_font.cmap.values())
-            .map(|&gid| full_font.advances[gid as usize])
-            .collect();
-        advances.sort_unstable();
-        advances.dedup();
-        assert_eq!(font.glyphs.len(), advances.len() + 1);
-        assert!(generated.data.len() < full.data.len() / 4);
-    }
-}
-
-#[test]
 fn uses_the_given_ascent() {
     let options = Options {
-        metrics_only: true,
         ascent: Some(0.8),
         ..Options::default()
     };
@@ -624,50 +566,46 @@ fn draws_debug_boxes() {
     let upm = glyph_data(Family::Sans).units_per_em as f64;
     let stroke = (upm / 32.0).round();
     let point = |x, y| Point { x, y, on: true };
-    for metrics_only in [false, true] {
-        let options = Options {
-            metrics_only,
-            ascent: Some(0.8),
-            debug_boxes: true,
-            ..Options::default()
-        };
-        let font = read(&generate_font(Family::Sans, &requests, &options).data);
-        let (top, bottom) = (units(Family::Sans, 800.0), units(Family::Sans, 800.0) - upm);
-        let gid = |c: char| font.cmap[&(c as u32)] as usize;
-        let filled = |right| {
+    let options = Options {
+        ascent: Some(0.8),
+        debug_boxes: true,
+        ..Options::default()
+    };
+    let font = read(&generate_font(Family::Sans, &requests, &options).data);
+    let (top, bottom) = (units(Family::Sans, 800.0), units(Family::Sans, 800.0) - upm);
+    let gid = |c: char| font.cmap[&(c as u32)] as usize;
+    let filled = |right| {
+        vec![
+            point(0.0, bottom),
+            point(0.0, top),
+            point(right, top),
+            point(right, bottom),
+        ]
+    };
+    assert!(font.glyphs[0].is_empty(), ".notdef");
+    for c in ['A', 'B', 'i'] {
+        let right = font.advances[gid(c)] as f64;
+        let (left, right_inside) = (stroke, right - stroke);
+        let (bottom, top) = (bottom + stroke, top - stroke);
+        assert_eq!(
+            font.glyphs[gid(c)],
             vec![
-                point(0.0, bottom),
-                point(0.0, top),
-                point(right, top),
-                point(right, bottom),
-            ]
-        };
-        assert!(font.glyphs[0].is_empty(), ".notdef");
-        for c in ['A', 'B', 'i'] {
-            let right = font.advances[gid(c)] as f64;
-            let (left, right_inside) = (stroke, right - stroke);
-            let (bottom, top) = (bottom + stroke, top - stroke);
-            assert_eq!(
-                font.glyphs[gid(c)],
+                filled(right),
                 vec![
-                    filled(right),
-                    vec![
-                        point(left, bottom),
-                        point(right_inside, bottom),
-                        point(right_inside, top),
-                        point(left, top)
-                    ]
-                ],
-                "{c}, metrics only: {metrics_only}"
-            );
-        }
-        let right = font.advances[gid('.')] as f64;
-        assert!(right < 2.0 * stroke);
-        assert_eq!(font.glyphs[gid('.')], vec![filled(right)]);
-        // Nothing to draw without advance.
-        assert!(font.glyphs[gid('\u{301}')].is_empty());
-        assert_eq!(gid('A') == gid('B'), metrics_only);
+                    point(left, bottom),
+                    point(right_inside, bottom),
+                    point(right_inside, top),
+                    point(left, top)
+                ]
+            ],
+            "{c}"
+        );
     }
+    let right = font.advances[gid('.')] as f64;
+    assert!(right < 2.0 * stroke);
+    assert_eq!(font.glyphs[gid('.')], vec![filled(right)]);
+    // Nothing to draw without advance.
+    assert!(font.glyphs[gid('\u{301}')].is_empty());
 }
 
 /// The pairs of glyph ids of the `kern` table of a font, with their kerning.
@@ -735,28 +673,21 @@ fn kerns_the_pairs_of_glyphs() {
             value: -50.0,
         },
     ];
-    for metrics_only in [false, true] {
-        let options = Options {
-            metrics_only,
-            kerning: kerning.clone(),
-            ..Options::default()
-        };
-        let data = generate_font(Family::Serif, &requests, &options).data;
-        let font = read(&data);
-        let gid = |c: char| font.cmap[&(c as u32)] as u16;
-        let value = |value: f64| units(Family::Serif, value) as i16;
-        assert_eq!(
-            kern_pairs(&data),
-            BTreeMap::from([
-                ((gid('W'), gid('a')), value(-80.0)),
-                ((gid('a'), gid('W')), value(40.4))
-            ]),
-            "metrics only: {metrics_only}"
-        );
-        // Without outlines, the kerned glyphs have their own glyph ids.
-        assert_ne!(gid('a'), gid('e'));
-        assert_eq!(gid('e') == gid('c'), metrics_only);
-    }
+    let options = Options {
+        kerning,
+        ..Options::default()
+    };
+    let data = generate_font(Family::Serif, &requests, &options).data;
+    let font = read(&data);
+    let gid = |c: char| font.cmap[&(c as u32)] as u16;
+    let value = |value: f64| units(Family::Serif, value) as i16;
+    assert_eq!(
+        kern_pairs(&data),
+        BTreeMap::from([
+            ((gid('W'), gid('a')), value(-80.0)),
+            ((gid('a'), gid('W')), value(40.4))
+        ])
+    );
     // No table without kerning.
     let data = generate_font(Family::Serif, &requests, &Options::default()).data;
     assert!(kern_pairs(&data).is_empty());

@@ -449,20 +449,9 @@ fn texts() {
     let font = generate_font(Family::Sans, &glyphs, &Options::default());
     assert_eq!(font.missing, vec![1, 2]);
     check("long texts", &font.data);
-    // Their advances are enough without outlines.
-    let options = Options {
-        metrics_only: true,
-        ..Options::default()
-    };
-    let font = generate_font(Family::Sans, &glyphs, &options);
-    assert!(font.missing.is_empty());
-    check("long texts, metrics only", &font.data);
 }
 
-/// A font has at most 65535 glyphs: the requests after the 65534th one are
-/// missing, but without outlines the glyphs of the same advance are shared
-/// (the kerned glyphs having their own glyph ids, only for the pairs which fit
-/// in the `kern` table).
+/// Requests beyond the 65534-glyph limit are reported missing.
 #[test]
 fn too_many_glyphs() {
     let glyphs: Vec<Request> = (0..0x10000)
@@ -471,55 +460,13 @@ fn too_many_glyphs() {
             ..request(&['A' as u32])
         })
         .collect();
-    let num_glyphs = |font: &[u8]| {
-        let maxp = tables(font)["maxp"];
-        u16::from_be_bytes([maxp[4], maxp[5]])
-    };
-    let kern_pairs = |font: &[u8]| {
-        (tables(font).get("kern")).map_or(0, |kern| u16::from_be_bytes([kern[10], kern[11]]))
-    };
-    let kerning = (0..glyphs.len() - 1)
-        .map(|i| Kerning {
-            left: i,
-            right: i + 1,
-            value: -10.0,
-        })
-        .collect();
-    let metrics_only = Options {
-        metrics_only: true,
-        ..Options::default()
-    };
-    let kerned = Options {
-        kerning,
-        ..metrics_only.clone()
-    };
-    // The 10920 first pairs are kept: the 10921 first glyphs are kerned, and
-    // the other ones share a glyph.
-    for (name, options, missing, count, pairs) in [
-        (
-            "too many glyphs",
-            Options::default(),
-            vec![0xfffe, 0xffff],
-            0xffff,
-            0,
-        ),
-        ("a lot of glyphs, metrics only", metrics_only, vec![], 2, 0),
-        (
-            "a lot of kerned glyphs, metrics only",
-            kerned,
-            vec![],
-            1 + 10921 + 1,
-            10920,
-        ),
-    ] {
-        let font = generate_font(Family::Sans, &glyphs, &options);
-        assert_eq!(font.missing, missing, "{name}");
-        assert_eq!(num_glyphs(&font.data), count, "{name}");
-        assert_eq!(kern_pairs(&font.data), pairs, "{name}");
-        let mapped = cmap(tables(&font.data)["cmap"]).len();
-        assert_eq!(mapped, glyphs.len() - missing.len(), "{name}");
-        check(name, &font.data);
-    }
+    let font = generate_font(Family::Sans, &glyphs, &Options::default());
+    assert_eq!(font.missing, [0xfffe, 0xffff]);
+    let tables = tables(&font.data);
+    let maxp = tables["maxp"];
+    assert_eq!(u16::from_be_bytes([maxp[4], maxp[5]]), 0xffff);
+    assert_eq!(cmap(tables["cmap"]).len(), 0xfffe);
+    check("too many glyphs", &font.data);
 }
 
 /// xorshift64*, for reproducible random fonts.
@@ -623,90 +570,10 @@ fn random_fonts() {
             &format!("random font {i}"),
             &generate_font(FAMILIES[family], &glyphs, &options).data,
         );
-        let options = Options {
-            metrics_only: true,
-            ..options
-        };
-        check(
-            &format!("random font {i}, metrics only"),
-            &generate_font(FAMILIES[family], &glyphs, &options).data,
-        );
     }
 }
 
-/// The fonts without outlines (for a text layer), and their compact tables.
-#[test]
-fn metrics_only() {
-    let options = Options {
-        metrics_only: true,
-        ..Options::default()
-    };
-    let font = |family, glyphs: &[Request]| generate_font(family, glyphs, &options).data;
-    for family in FAMILIES {
-        check(
-            &format!("{family:?}, metrics only"),
-            &font(family, &sample()),
-        );
-        let glyphs = all_the_glyphs(glyph_data(family));
-        check(
-            &format!("all the {family:?} glyphs, metrics only"),
-            &font(family, &glyphs),
-        );
-    }
-    check("no glyph, metrics only", &font(Family::Sans, &[]));
-    let options = Options {
-        ascent: Some(0.75),
-        ..options.clone()
-    };
-    check(
-        "metrics only, with an ascent",
-        &generate_font(Family::Serif, &sample(), &options).data,
-    );
-
-    let letter = |i: usize| request(&['A' as u32 + (i % 26) as u32]);
-    let codes = [
-        0, 1, 0x20, 0x20, 0xd800, 0xdfff, 0xfffe, 0xffff, 0x10000, 0x10ffff, 0x110000, 0xffffffff,
-    ];
-    let glyphs: Vec<Request> = codes
-        .iter()
-        .enumerate()
-        .map(|(i, &code)| Request {
-            char_code: Some(code),
-            width: Some(100.0 * i as f64),
-            ..letter(i)
-        })
-        .collect();
-    check(
-        "edge char codes, metrics only",
-        &font(Family::Sans, &glyphs),
-    );
-
-    // Scattered codes sharing a glyph: a big format 4 subtable.
-    let glyphs: Vec<Request> = (0..10000)
-        .map(|i| Request {
-            char_code: Some(3 * i),
-            width: Some(600.0),
-            ..letter(0)
-        })
-        .collect();
-    check(
-        "a lot of scattered char codes, metrics only",
-        &font(Family::Mono, &glyphs),
-    );
-
-    // Too many codes for a format 4 subtable with glyph ids arrays.
-    let glyphs: Vec<Request> = (0..40000)
-        .map(|i| Request {
-            char_code: Some(0x20 + i),
-            width: Some((i % 1000) as f64),
-            ..letter(i as usize)
-        })
-        .collect();
-    check("a lot of codes, metrics only", &font(Family::Sans, &glyphs));
-}
-
-/// The rectangles of the debug boxes, with and without outlines, and so many
-/// distinct advances that `loca` needs long offsets without outlines.
+/// Debug boxes with varied advances and a custom ascent.
 #[test]
 fn debug_boxes() {
     let glyphs: Vec<Request> = (0..10000)
@@ -716,32 +583,25 @@ fn debug_boxes() {
             ..request(&['A' as u32 + i % 26])
         })
         .collect();
-    for metrics_only in [false, true] {
-        let options = Options {
-            metrics_only,
-            debug_boxes: true,
-            ..Options::default()
-        };
-        check(
-            &format!("debug boxes, metrics only: {metrics_only}"),
-            &generate_font(Family::Serif, &sample(), &options).data,
-        );
-        let options = Options {
-            ascent: Some(0.8),
-            ..options
-        };
-        let font = generate_font(Family::Sans, &glyphs, &options).data;
-        check(
-            &format!("a lot of debug boxes, metrics only: {metrics_only}"),
-            &font,
-        );
-        let head = tables(&font)["head"];
-        assert_eq!(&head[50..52], &[0, 1], "indexToLocFormat: long offsets");
-    }
+    let options = Options {
+        debug_boxes: true,
+        ..Options::default()
+    };
+    check(
+        "debug boxes",
+        &generate_font(Family::Serif, &sample(), &options).data,
+    );
+    let options = Options {
+        ascent: Some(0.8),
+        ..options
+    };
+    let font = generate_font(Family::Sans, &glyphs, &options).data;
+    check("a lot of debug boxes", &font);
+    let head = tables(&font)["head"];
+    assert_eq!(&head[50..52], &[0, 1], "indexToLocFormat: long offsets");
 }
 
-/// The kerning (a `kern` table), with and without outlines, up to the maximal
-/// number of pairs of a subtable.
+/// Kerning up to the pair limit of a format 0 subtable.
 #[test]
 fn kerning() {
     let glyphs = sample();
@@ -755,24 +615,20 @@ fn kerning() {
             })
             .collect()
     };
-    for metrics_only in [false, true] {
-        for (name, kerning) in [("a few pairs", pairs(n)), ("all the pairs", pairs(n * n))] {
-            let options = Options {
-                metrics_only,
-                kerning,
-                ..Options::default()
-            };
-            check(
-                &format!("kerning, {name}, metrics only: {metrics_only}"),
-                &generate_font(Family::Sans, &glyphs, &options).data,
-            );
-        }
+    for (name, kerning) in [("a few pairs", pairs(n)), ("all the pairs", pairs(n * n))] {
+        let options = Options {
+            kerning,
+            ..Options::default()
+        };
+        check(
+            &format!("kerning, {name}"),
+            &generate_font(Family::Sans, &glyphs, &options).data,
+        );
     }
     // More pairs than a subtable can have.
     let glyphs = all_the_glyphs(glyph_data(Family::Sans));
     let n = glyphs.len();
     let options = Options {
-        metrics_only: true,
         kerning: (0..12000)
             .map(|i| Kerning {
                 left: i % 110,

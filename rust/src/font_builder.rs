@@ -101,10 +101,6 @@ pub struct Options {
     /// The font name ("HellboxSubstitute" when empty), truncated to 255
     /// characters.
     pub name: String,
-    /// Omit outlines and use minimal names, e.g. for a text layer. Requests
-    /// of equal advance share glyph ids unless used by an emitted kerning
-    /// pair. Use the cmap to find their ids.
-    pub metrics_only: bool,
     /// The ascent as a fraction of the em (between 0 and 1), the descent being
     /// the rest, without line gap: e.g. for a text layer, whose lines are an
     /// em high.
@@ -113,7 +109,7 @@ pub struct Options {
     /// glyphs which aren't in the cmap are ignored, and a subtable has at most
     /// 10920 pairs (the first ones in the order of the requests).
     pub kerning: Vec<Kerning>,
-    /// For debugging (e.g. with `metrics_only`): each glyph with an advance,
+    /// For debugging: each glyph with an advance,
     /// .notdef excepted, is the outline (1/32 em thick, inside) of a
     /// rectangle covering it, from the descender to the ascender.
     pub debug_boxes: bool,
@@ -136,7 +132,6 @@ impl Default for Options {
             max_scale: 1.25,
             adaptive_bold: true,
             name: DEFAULT_NAME.to_string(),
-            metrics_only: false,
             ascent: None,
             kerning: Vec::new(),
             debug_boxes: false,
@@ -385,13 +380,7 @@ pub fn build_font(
     // The slant of the font, and the vertical scale of its metrics.
     let slant = slant_of(style.italic_angle);
     let y_scale = syntheses[0].y_scale;
-    // The other requests don't fit in the font (without outlines, they all
-    // fit: the glyphs are shared, see MAX_GLYPHS).
-    let count = if options.metrics_only {
-        requests.len()
-    } else {
-        requests.len().min(MAX_GLYPHS - 1)
-    };
+    let count = requests.len().min(MAX_GLYPHS - 1);
     let (requests, excess) = (&requests[..count], requests.len() - count);
 
     let resolver = Resolver::new(sources, tables);
@@ -407,12 +396,6 @@ pub fn build_font(
     });
     let mut cmap: Vec<(u32, usize)> = Vec::new();
     let mut mapped = std::collections::HashSet::new();
-    // Without outlines, a given width is the advance: the glyph data only
-    // matters for a natural width (its advance and, for the emboldening, the
-    // outline, see `density_factor`).
-    let uses_data = |request: &Request| {
-        !options.metrics_only || !matches!(request.width, Some(width) if width >= 0.0)
-    };
     // The glyphs of the requests, which are decoded together (see
     // `GlyphData::prepare`).
     let resolved: Vec<Vec<(usize, usize)>> = requests
@@ -429,11 +412,9 @@ pub fn build_font(
         })
         .collect();
     for (source, data) in sources.iter().enumerate() {
-        let gids: Vec<usize> = requests
+        let gids: Vec<usize> = resolved
             .iter()
-            .zip(&resolved)
-            .filter(|(request, _)| uses_data(request))
-            .flat_map(|(_, glyphs)| glyphs)
+            .flatten()
             .filter(|&&(s, _)| s == source)
             .map(|&(_, gid)| gid)
             .collect();
@@ -441,9 +422,8 @@ pub fn build_font(
             data.prepare(&gids);
         }
     }
-    // Without outlines the scale doesn't matter, and the expected stems
-    // (`Options::stem_v`) don't follow it.
-    let font_scale = if options.metrics_only || !style.scaled_stems {
+    // Expected stems (`Options::stem_v`) don't follow the font scale.
+    let font_scale = if !style.scaled_stems {
         1.0
     } else {
         clamp(
@@ -466,9 +446,8 @@ pub fn build_font(
         }
 
         let mut natural_advance = 0.0;
-        let used_glyphs = if uses_data(request) { &glyphs[..] } else { &[] };
-        let mut parts: Vec<Part> = Vec::with_capacity(used_glyphs.len());
-        for &(source, gid) in used_glyphs {
+        let mut parts: Vec<Part> = Vec::with_capacity(glyphs.len());
+        for (source, gid) in glyphs {
             if !used_sources.contains(&source) {
                 used_sources.push(source);
             }
@@ -498,11 +477,9 @@ pub fn build_font(
             });
             natural_advance += advance;
         }
-        // A long text (e.g. a repeated letter) can't be a single glyph, but
-        // its advance is enough without outlines.
         let points: usize = parts.iter().map(|part| part.outline.xs.len()).sum();
         let contours: usize = parts.iter().map(|part| part.outline.end_pts.len()).sum();
-        if !options.metrics_only && (points > MAX_POINTS || contours > MAX_CONTOURS) {
+        if points > MAX_POINTS || contours > MAX_CONTOURS {
             missing.push(i);
             parts.clear();
             natural_advance = 0.0;
@@ -571,9 +548,6 @@ pub fn build_font(
         }
         // Center the glyph when it can't fit exactly.
         let shift = (advance - (natural_advance * x_scale + strength + compensation_width)) / 2.0;
-        if options.metrics_only {
-            parts.clear();
-        }
         // Apply each source's synthesis and add preceding advance growth.
         // Marks inherit their base's offset rather than advancing the pen.
         let (mut growth, mut part_growth) = (0.0, 0.0);
@@ -609,20 +583,7 @@ pub fn build_font(
     for &(_, gid) in &cmap {
         request_gids[gid - 1] = gid;
     }
-    let kerned_pairs = prepare_kerning(&options.kerning, &request_gids, to_font_units);
-    if options.metrics_only {
-        share_glyphs(&mut out_glyphs, &mut cmap, &mut request_gids, &kerned_pairs);
-    }
-
-    // Kerned requests retain their order when assigned glyph ids, so this
-    // conversion preserves the pair ordering required by the kern table.
-    let kerning: Vec<(u32, usize)> = kerned_pairs
-        .iter()
-        .map(|&(pair, value)| {
-            let [left, right] = kerning_requests(pair).map(|i| request_gids[i] as u32);
-            ((left << 16) | right, value)
-        })
-        .collect();
+    let kerning = prepare_kerning(&options.kerning, &request_gids, to_font_units);
 
     let (ascender, descender, line_gap) = match options.ascent {
         Some(ascent) if ascent > 0.0 && ascent < 1.0 => {
@@ -663,22 +624,8 @@ pub fn build_font(
     .chars()
     .take(MAX_NAME_LENGTH)
     .collect();
-    let names = if options.metrics_only {
-        // Keep the five name IDs that OTS would otherwise synthesize.
-        [(1, "P"), (2, "R"), (4, "P"), (5, "1"), (6, "P")]
-            .map(|(id, value)| (id, value.to_string()))
-            .to_vec()
-    } else {
-        make_names(&used, &name, &metrics)
-    };
-    let font = write_font(
-        &out_glyphs,
-        &cmap,
-        &kerning,
-        &metrics,
-        &names,
-        options.metrics_only,
-    );
+    let names = make_names(&used, &name, &metrics);
+    let font = write_font(&out_glyphs, &cmap, &kerning, &metrics, &names);
     (font, missing)
 }
 
@@ -714,71 +661,33 @@ fn add_debug_boxes(glyphs: &mut [OutGlyph], ascender: i16, descender: i16, upm: 
     }
 }
 
-/// Unpack the two 32-bit request indices.
-fn kerning_requests(pair: u64) -> [usize; 2] {
-    [(pair >> 32) as usize, pair as u32 as usize]
-}
-
-/// Keep the first nonzero rounded value per mapped pair, sorted by request
-/// indices and limited before reserving glyph ids. Values store FWORD bits.
+/// Keep the first nonzero rounded value per mapped pair, sorted by glyph ids.
+/// Values store FWORD bits.
 fn prepare_kerning(
     pairs: &[Kerning],
     request_gids: &[usize],
     to_font_units: impl Fn(f64) -> f64,
-) -> Vec<(u64, usize)> {
+) -> Vec<(u32, usize)> {
     let is_mapped = |i: usize| request_gids.get(i).is_some_and(|&gid| gid != 0);
     let mut pairs: Vec<_> = pairs
         .iter()
         .filter_map(|pair| {
             let value = fword(to_font_units(pair.value));
-            (value != 0 && is_mapped(pair.left) && is_mapped(pair.right)).then_some((
-                ((pair.left as u64) << 32) | pair.right as u64,
-                value as u16 as usize,
-            ))
+            (value != 0 && is_mapped(pair.left) && is_mapped(pair.right)).then(|| {
+                (
+                    ((request_gids[pair.left] as u64) << 16) | request_gids[pair.right] as u64,
+                    value as u16 as usize,
+                )
+            })
         })
         .collect();
     sort_by_code(&mut pairs);
     pairs.dedup_by_key(|pair| pair.0);
     pairs.truncate(MAX_KERNING_PAIRS);
     pairs
-}
-
-/// Share empty glyphs by advance, excluding .notdef and kerned requests.
-fn share_glyphs(
-    glyphs: &mut Vec<OutGlyph>,
-    cmap: &mut [(u32, usize)],
-    request_gids: &mut [usize],
-    kerning: &[(u64, usize)],
-) {
-    let mut kerned = vec![false; request_gids.len()];
-    for &(pair, _) in kerning {
-        for request in kerning_requests(pair) {
-            kerned[request] = true;
-        }
-    }
-    // Each output glyph's advance and whether it can be shared.
-    let mut advances: Vec<(u16, bool)> = Vec::new();
-    for (_, gid) in cmap {
-        let request = *gid - 1;
-        let advance = glyphs[*gid].advance;
-        let shareable = !kerned[request];
-        *gid = 1 + match advances
-            .iter()
-            .position(|&(a, shared)| shared && a == advance)
-        {
-            Some(index) if shareable => index,
-            _ => {
-                advances.push((advance, shareable));
-                advances.len() - 1
-            }
-        };
-        request_gids[request] = *gid;
-    }
-    glyphs.truncate(1);
-    glyphs.extend(advances.into_iter().map(|(advance, _)| OutGlyph {
-        outline: None,
-        advance,
-    }));
+        .into_iter()
+        .map(|(gids, value)| (gids as u32, value))
+        .collect()
 }
 
 fn make_names(sources: &[&GlyphData], name: &str, metrics: &Metrics) -> Vec<(u16, String)> {
@@ -917,9 +826,7 @@ fn sort_by_code(entries: &mut [(u64, usize)]) {
     entries.sort_by_key(|&(code, _)| code);
 }
 
-/// Valid cmap mappings, sorted by code using the same `(u64, usize)` sort
-/// as kerning pairs (another instance of the stable sort would make the wasm
-/// module 1 KB bigger).
+/// Valid cmap mappings, sorted by code.
 fn cmap_entries(cmap: &[(u32, usize)]) -> Vec<(u32, usize)> {
     let mut entries: Vec<(u64, usize)> = cmap
         .iter()
@@ -964,39 +871,32 @@ fn write_format12(groups: &[(u32, u32, usize)]) -> Vec<u8> {
     w.bytes
 }
 
-/// A format 4 subtable, from its segments (start, end, idDelta and the index
-/// of their glyph ids, if any) without the final 0xFFFF one.
-fn write_format4(segments: &[(u32, u32, i64, Option<usize>)], glyph_ids: &[usize]) -> Vec<u8> {
+/// A format 4 subtable from (start, end, idDelta) segments, without the final
+/// 0xFFFF segment.
+fn write_format4(segments: &[(u32, u32, i64)]) -> Vec<u8> {
     let seg_count = segments.len() + 1;
     let mut w = Writer::new();
     w.u16(4);
-    w.u16((16 + 8 * seg_count + 2 * glyph_ids.len()) as u16);
+    w.u16((16 + 8 * seg_count) as u16);
     w.u16(0); // language
     w.u16(2 * seg_count as u16);
     for value in search_fields(seg_count as u16, 2) {
         w.u16(value);
     }
-    for &(_, end, _, _) in segments {
+    for &(_, end, _) in segments {
         w.u16(end as u16);
     }
     w.u16(0xffff);
     w.u16(0); // reservedPad
-    for &(start, _, _, _) in segments {
+    for &(start, _, _) in segments {
         w.u16(start as u16);
     }
     w.u16(0xffff);
-    for &(_, _, delta, _) in segments {
+    for &(_, _, delta) in segments {
         w.u16(delta as u16); // Modulo 65536.
     }
     w.u16(1);
-    // From each idRangeOffset to the glyph ids of its segment.
-    for (i, &(_, _, _, index)) in segments.iter().enumerate() {
-        w.u16(index.map_or(0, |index| 2 * (seg_count - i) + 2 * index) as u16);
-    }
-    w.u16(0);
-    for &gid in glyph_ids {
-        w.u16(gid as u16);
-    }
+    w.zeros(2 * seg_count); // idRangeOffset: all segments use idDelta.
     w.bytes
 }
 
@@ -1039,9 +939,9 @@ fn write_cmap(cmap: &[(u32, usize)]) -> Vec<u8> {
             truncated = true;
             break;
         }
-        segments.push((start, end.min(0xfffe), gid as i64 - start as i64, None));
+        segments.push((start, end.min(0xfffe), gid as i64 - start as i64));
     }
-    let mut subtables = vec![write_format4(&segments, &[])];
+    let mut subtables = vec![write_format4(&segments)];
 
     // Format 12, only when format 4 isn't enough.
     if truncated || groups.last().is_some_and(|g| g.1 > 0xfffe) {
@@ -1050,39 +950,6 @@ fn write_cmap(cmap: &[(u32, usize)]) -> Vec<u8> {
     } else {
         write_cmap_table(&[(0, 3, 0), (3, 1, 0)], &subtables)
     }
-}
-
-/// A smaller cmap when many codes share a few glyphs (see
-/// `Options::metrics_only`): format 4 with glyph ids arrays (and format 12
-/// for the codes beyond the BMP), in Windows subtables only. None when the
-/// format 4 subtable would be too big.
-fn write_compact_cmap(cmap: &[(u32, usize)]) -> Option<Vec<u8>> {
-    let entries = cmap_entries(cmap);
-    // The segments of codes: a new one when more than 4 codes are skipped (a
-    // segment takes 8 bytes, a glyph id 2).
-    let mut segments: Vec<(u32, u32, i64, Option<usize>)> = Vec::new();
-    let mut glyph_ids = Vec::new();
-    for &(code, gid) in entries.iter().take_while(|&&(code, _)| code <= 0xfffe) {
-        match segments.last_mut() {
-            Some(last) if code - last.1 <= 5 => {
-                glyph_ids.extend((last.1 + 1..code).map(|_| 0));
-                last.1 = code;
-            }
-            _ => segments.push((code, code, 0, Some(glyph_ids.len()))),
-        }
-        glyph_ids.push(gid);
-    }
-    if 16 + 8 * (segments.len() + 1) + 2 * glyph_ids.len() > 0xffff {
-        return None;
-    }
-    let mut subtables = vec![write_format4(&segments, &glyph_ids)];
-    let groups = cmap_groups(&entries);
-    Some(if groups.last().is_some_and(|g| g.1 > 0xfffe) {
-        subtables.push(write_format12(&groups));
-        write_cmap_table(&[(3, 1, 0), (3, 10, 1)], &subtables)
-    } else {
-        write_cmap_table(&[(3, 1, 0)], &subtables)
-    })
 }
 
 fn write_name(names: &[(u16, String)]) -> Vec<u8> {
@@ -1155,16 +1022,12 @@ fn write_kern(pairs: &[(u32, usize)]) -> Vec<u8> {
     w.bytes
 }
 
-/// Writes the font: `compact` is for a font without outlines (see
-/// `Options::metrics_only`), with short offsets in `loca` (if they fit) and a
-/// compact cmap.
 fn write_font(
     glyphs: &[OutGlyph],
     cmap: &[(u32, usize)],
     kerning: &[(u32, usize)],
     metrics: &Metrics,
     names: &[(u16, String)],
-    compact: bool,
 ) -> Vec<u8> {
     let upm = metrics.units_per_em as f64;
     let num_glyphs = glyphs.len();
@@ -1184,10 +1047,9 @@ fn write_font(
     let mut advance_width_max = 0;
     let (mut max_points, mut max_contours) = (0, 0);
     let (mut width_sum, mut width_count) = (0, 0);
-    let mut offsets = Vec::with_capacity(num_glyphs + 1);
     for glyph in glyphs {
         let advance = glyph.advance;
-        offsets.push(glyf.len());
+        loca.u32(glyf.len() as u32);
         advance_width_max = advance_width_max.max(advance);
         if advance > 0 {
             width_sum += u32::from(advance);
@@ -1212,16 +1074,7 @@ fn write_font(
         max_points = max_points.max(encoded.num_points);
         max_contours = max_contours.max(outline.end_pts.len());
     }
-    offsets.push(glyf.len());
-    // The offsets are even (the glyphs are padded).
-    let short_loca = compact && glyf.len() / 2 <= 0xffff;
-    for offset in offsets {
-        if short_loca {
-            loca.u16((offset / 2) as u16);
-        } else {
-            loca.u32(offset as u32);
-        }
-    }
+    loca.u32(glyf.len() as u32);
     // Keep glyf nonempty even when every loca offset is zero.
     if glyf.len() == 0 {
         glyf.zeros(1);
@@ -1252,7 +1105,7 @@ fn write_font(
     head.u16(u16::from(metrics.bold) | (u16::from(metrics.italic) << 1));
     head.u16(8); // lowestRecPPEM
     head.i16(2); // fontDirectionHint
-    head.i16(if short_loca { 0 } else { 1 }); // indexToLocFormat
+    head.i16(1); // indexToLocFormat
     head.i16(0);
 
     let mut hhea = Writer::new();
@@ -1353,11 +1206,7 @@ fn write_font(
     // Sorted by tag, without the empty ones (only `kern` can be).
     let tables: [(&[u8; 4], Vec<u8>); 11] = [
         (b"OS/2", os2.bytes),
-        (
-            b"cmap",
-            (compact.then(|| write_compact_cmap(cmap)).flatten())
-                .unwrap_or_else(|| write_cmap(cmap)),
-        ),
+        (b"cmap", write_cmap(cmap)),
         (b"glyf", glyf.bytes),
         (b"head", head.bytes),
         (b"hhea", hhea.bytes),

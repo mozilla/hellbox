@@ -157,10 +157,8 @@ fn kerning(triples: Option<Vec<f64>>, n: usize) -> Result<Vec<Kerning>, JsError>
     Ok(kerning)
 }
 
-/// Generates a TrueType font from the requested glyphs (the glyph id
-/// of the i-th one is i + 1, except with `metrics_only`): a font has at most
-/// 65535 glyphs, the requests after the 65534th one are ignored (except with
-/// `metrics_only`, whose glyphs are shared).
+/// Generates a TrueType font from the requested glyphs (glyph id i + 1 for
+/// request i). Requests after the first 65534 are ignored.
 ///
 /// - `codepoints`: the codepoints of the texts of all the glyphs, one after
 ///   the other (a text is usually a single codepoint, but it can be e.g. a
@@ -178,9 +176,6 @@ fn kerning(triples: Option<Vec<f64>>, n: usize) -> Result<Vec<Kerning>, JsError>
 ///   for any negative angle with the serif family, which has an italic style),
 ///   `cap_height` (the glyphs are vertically scaled to match it): 0 or NaN
 ///   when unknown.
-/// - `metrics_only` (optional, `false` by default): omit outlines and use
-///   minimal names. Equal advances share glyph ids unless the requests are
-///   used by an emitted kerning pair (see the cmap).
 /// - `ascent` (optional): the ascent as a fraction of the em (between 0 and
 ///   1), the descent being the rest, without line gap (e.g. for a text layer,
 ///   whose lines are an em high).
@@ -205,7 +200,6 @@ pub fn generate_font(
     stem_v: f64,
     italic_angle: f64,
     cap_height: f64,
-    metrics_only: Option<bool>,
     ascent: Option<f64>,
     kerning: Option<Vec<f64>>,
     debug_boxes: Option<bool>,
@@ -214,7 +208,6 @@ pub fn generate_font(
     let kerning = self::kerning(kerning, glyphs.len())?;
     let options = Options {
         cap_height: optional(cap_height),
-        metrics_only: metrics_only.unwrap_or(false),
         ascent,
         kerning,
         debug_boxes: debug_boxes.unwrap_or(false),
@@ -244,7 +237,7 @@ pub fn missing_glyphs(
 
 /// Generates a standard font of PDF (e.g. "Helvetica-Bold", see
 /// `StandardFont`) from the requested glyphs (the glyph id of the
-/// i-th one is i + 1, except with `metrics_only`): the arguments are the ones
+/// i-th one is i + 1): the arguments are the ones
 /// of `generate_font`, without the style (it's the one of the standard font).
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
@@ -254,7 +247,6 @@ pub fn generate_standard_font(
     widths: &[f64],
     char_codes: &[u32],
     name: &str,
-    metrics_only: Option<bool>,
     ascent: Option<f64>,
     kerning: Option<Vec<f64>>,
     debug_boxes: Option<bool>,
@@ -264,7 +256,6 @@ pub fn generate_standard_font(
     let glyphs = requests(codepoints, lengths, widths, char_codes)?;
     let kerning = self::kerning(kerning, glyphs.len())?;
     let options = Options {
-        metrics_only: metrics_only.unwrap_or(false),
         ascent,
         kerning,
         debug_boxes: debug_boxes.unwrap_or(false),

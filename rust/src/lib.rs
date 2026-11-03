@@ -437,10 +437,9 @@ pub fn font_data_files(family: Family, options: &Options) -> Vec<&'static str> {
 
 /// A generated font.
 pub struct GeneratedFont {
-    /// The TrueType font. With outlines, retained request i has glyph id i + 1.
-    /// With `metrics_only`, use the cmap to find shared glyph ids.
+    /// The TrueType font. Retained request i has glyph id i + 1.
     pub data: Vec<u8>,
-    /// Indices of unresolved requests. With outlines, also includes requests
+    /// Indices of unresolved requests. Also includes requests
     /// exceeding point/contour limits or after the first 65534.
     /// `debug_boxes` can draw boxes for missing requests with a nonzero advance.
     pub missing: Vec<usize>,

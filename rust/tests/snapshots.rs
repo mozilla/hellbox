@@ -346,16 +346,6 @@ fn cases() -> Vec<Case> {
                 .collect(),
         ),
         case("empty", Family::Serif, default(), Vec::new()),
-        // Without outlines (for a text layer).
-        case(
-            "sans-metrics-only",
-            Family::Sans,
-            Options {
-                metrics_only: true,
-                ..default()
-            },
-            text(latin, widths),
-        ),
         // The standard fonts: their glyphs, slanted for the oblique ones, and
         // the Noto glyphs synthesized to their style.
         standard("helvetica", StandardFont::Helvetica, text(latin, widths)),
