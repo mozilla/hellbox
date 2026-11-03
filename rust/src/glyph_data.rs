@@ -12,6 +12,12 @@ use crate::payload;
 use crate::Error;
 use std::sync::{Mutex, MutexGuard};
 
+/// Stable sort by packed code: the cmaps, the kerning pairs and the scales
+/// share it, the sort being big (generic code is compiled for each type).
+pub(crate) fn sort_by_code(entries: &mut [(u64, usize)]) {
+    entries.sort_by_key(|&(code, _)| code);
+}
+
 pub(crate) const MAGIC: [u8; 4] = *b"HBGD";
 pub(crate) const VERSION: u8 = 1;
 #[cfg(feature = "encoder")]
@@ -200,7 +206,7 @@ impl GlyphData {
 
         // cmap: runs of codepoints mapped to consecutive glyph ids (from
         // first_gid, the starts wrapping around), then the aliases.
-        let mut cmap = Vec::new();
+        let mut cmap: Vec<(u64, usize)> = Vec::new();
         let mut gid = payload.first_gid;
         let mut start: u64 = 0;
         for &[gap, length] in payload.runs.as_chunks::<2>().0 {
@@ -213,7 +219,7 @@ impl GlyphData {
                 return Err(Error::InvalidData);
             }
             for cp in start..=end {
-                cmap.push((cp as u32, gid as u32));
+                cmap.push((cp, gid as u32 as usize));
                 gid += 1;
             }
             start = end + 1;
@@ -224,15 +230,19 @@ impl GlyphData {
             if cp > 0x10ffff {
                 return Err(Error::InvalidData);
             }
-            cmap.push((cp as u32, gid as u32));
+            cmap.push((cp, gid as u32 as usize));
         }
         // The aliases replace the previous mappings.
         cmap.reverse();
-        cmap.sort_by_key(|&(cp, _)| cp);
-        cmap.dedup_by_key(|&mut (cp, _)| cp);
-        if cmap.iter().any(|&(_, gid)| gid as usize >= num_glyphs) {
+        sort_by_code(&mut cmap);
+        cmap.dedup_by_key(|entry| entry.0);
+        if cmap.iter().any(|&(_, gid)| gid >= num_glyphs) {
             return Err(Error::InvalidData);
         }
+        let cmap = cmap
+            .into_iter()
+            .map(|(cp, gid)| (cp as u32, gid as u32))
+            .collect();
 
         Ok(GlyphData {
             units_per_em: u16_at(f, 0),

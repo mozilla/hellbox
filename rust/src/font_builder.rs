@@ -11,7 +11,7 @@
 //! rounded to 16.16, rather than `hypot` and the raw `tan`, which differ
 //! between platforms: the fonts are the same everywhere.
 
-use crate::glyph_data::{GlyphData, Outline};
+use crate::glyph_data::{sort_by_code, GlyphData, Outline};
 use crate::outline;
 use crate::unicode::{Resolver, UnicodeTables};
 
@@ -824,11 +824,6 @@ fn encode_glyph(outline: &Outline, w: &mut Writer) -> EncodedGlyph {
         y_max,
         num_points: n,
     }
-}
-
-/// Stable sort by packed code.
-fn sort_by_code(entries: &mut [(u64, usize)]) {
-    entries.sort_by_key(|&(code, _)| code);
 }
 
 /// Groups of consecutive codes mapped to consecutive glyphs.
