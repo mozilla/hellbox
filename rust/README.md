@@ -152,10 +152,12 @@ in the output directory (`build/wasm` by default):
   runtime with `set_data`,
 - `hellbox_nowasm_fallback.js`, the JS version of the module, translated by
   binaryen's `wasm2js` and minified by terser, to load with `initJs` (see
-  above). The build disables reference types and multivalue, lowers
-  instructions for the JS translation, and adapts the glue's memory views for
-  JS memory growth. `node tools/check_js_fallback.mjs <dir>` compares selected
-  fonts and missing-glyph indices from the two versions.
+  above). The `js-fallback` profile in `Cargo.toml` optimizes for size; the
+  build checks that its glue matches the release build. The build disables
+  reference types and multivalue, lowers instructions for the JS translation,
+  and adapts the glue's memory views for JS memory growth.
+  `node tools/check_js_fallback.mjs <dir>` compares selected fonts and
+  missing-glyph indices from the two versions.
 
 `--no-js-fallback` skips the JS version, and `--embedded-data` embeds the data
 files in the module instead (without the JS version, which needs them

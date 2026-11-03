@@ -37,6 +37,12 @@ encoder = ["dep:read-fonts", "dep:flate2", "dep:unicode-normalization"]
 lto = true
 opt-level = 2
 codegen-units = 1
+
+# Size-optimized module for wasm2js (see compile.sh).
+[profile.js-fallback]
+inherits = "release"
+opt-level = "z"
+
 # skrifa draws the glyphs of the reference tests, fontsan builds OTS (a C++
 # compiler is needed), divan runs the benchmarks (benches/), through the
 # compatibility layer of CodSpeed (it measures them in its runner).
@@ -46,6 +52,10 @@ fontsan = { version = "0.7", default-features = false, features = ["libz-rs", "w
 skrifa = { version = "0.49", default-features = false, features = ["std"] }
 
 [package.metadata.wasm-pack.profile.release.wasm-bindgen]
+omit-default-module-path = true
+
+# Match the release profile's wasm-bindgen options.
+[package.metadata.wasm-pack.profile.custom.wasm-bindgen]
 omit-default-module-path = true
 
 [[bin]]

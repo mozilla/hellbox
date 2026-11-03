@@ -7,10 +7,10 @@
 # $OUTPUT/$OUTPUT_NAME.js and $OUTPUT/${OUTPUT_NAME}_bg.wasm; defaults below.
 # EMBEDDED_DATA=0 copies data files to $OUTPUT for runtime loading.
 #
-# JS_FALLBACK=1 also writes ${OUTPUT_NAME}_nowasm_fallback.js using wasm2js,
-# minified by terser. It uses the same glue (via initJs) and data files.
-# Binaryen tools come from $BINARYEN, or PATH when unset, and terser from
-# $TERSER, or PATH.
+# JS_FALLBACK=1 writes ${OUTPUT_NAME}_nowasm_fallback.js using wasm2js and
+# terser. It uses the js-fallback profile, the same glue (via initJs) and data.
+# Binaryen tools come from $BINARYEN (otherwise PATH); terser from $TERSER
+# (otherwise PATH).
 set -e
 
 OUTPUT=${OUTPUT:=.}
@@ -36,22 +36,27 @@ if [ "${JS_FALLBACK}" = 1 ]; then
   export RUSTFLAGS
 fi
 
-wasm-pack build \
-          --target web \
-          --release \
-          --no-typescript \
-          --no-pack \
-          --out-name "${OUTPUT_NAME}" \
-          --out-dir "${OUTPUT}" \
-          "$@"
+build() {
+  wasm-pack build --target web --no-typescript --no-pack \
+            --out-name "${OUTPUT_NAME}" "$@"
+}
+
+build --release --out-dir "${OUTPUT}" "$@"
 
 if [ "${EMBEDDED_DATA}" = 0 ]; then
   cp data/*.hbgd data/unicode.bin "${OUTPUT}/"
 fi
 
 if [ "${JS_FALLBACK}" = 1 ]; then
-  GLUE="${OUTPUT}/${OUTPUT_NAME}.js"
   TMP=$(mktemp -d)
+  trap 'rm -rf "${TMP}"' 0
+  # Build for wasm2js and require identical glue.
+  build --profile js-fallback --out-dir "${TMP}/js" "$@"
+  GLUE="${OUTPUT}/${OUTPUT_NAME}.js"
+  if ! cmp -s "${GLUE}" "${TMP}/js/${OUTPUT_NAME}.js"; then
+    echo "The wasm and JS builds must have the same glue." >&2
+    exit 1
+  fi
   # Check buffer identity for both wasm and JS memory growth.
   sed -i -E \
     -e 's/(cached(Float64Array|Uint32Array|Uint8Array)Memory0)\.byteLength === 0/\1.buffer !== wasm.memory.buffer/' \
@@ -74,10 +79,10 @@ function initJs(instantiate) {
 }
 export { initJs };
 EOF
-  # Lower instructions for wasm2js without changing the shipped wasm module.
+  # Lower instructions for wasm2js.
   WASM_OPT="${BINARYEN:+${BINARYEN}/}wasm-opt"
   WASM2JS="${BINARYEN:+${BINARYEN}/}wasm2js"
-  "${WASM_OPT}" "${OUTPUT}/${OUTPUT_NAME}_bg.wasm" \
+  "${WASM_OPT}" "${TMP}/js/${OUTPUT_NAME}_bg.wasm" \
            --enable-mutable-globals --enable-sign-ext \
            --enable-nontrapping-float-to-int --enable-bulk-memory \
            --llvm-nontrapping-fptoint-lowering --llvm-memory-copy-fill-lowering \
@@ -95,7 +100,6 @@ EOF
   "${TERSER:-terser}" "${TMP}/module.js" --module --compress --mangle \
            -o "${FALLBACK}"
   sed -i "1 i\/* THIS FILE IS GENERATED - DO NOT EDIT */" "${FALLBACK}"
-  rm -rf "${TMP}"
 fi
 
 sed -i "1 i\/* THIS FILE IS GENERATED - DO NOT EDIT */" "${OUTPUT}/${OUTPUT_NAME}.js"
