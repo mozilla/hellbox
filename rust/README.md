@@ -143,19 +143,19 @@ From the root of the repository:
 node build.js --compile --output my_output_dir
 ```
 
-It builds a Docker image with the toolchain (Rust, the wasm target, wasm-pack
-and binaryen, see `Dockerfile`) if it doesn't exist yet, then generates in the
-output directory (`build/wasm` by default):
+It builds a Docker image with the toolchain (Rust, the wasm target, wasm-pack,
+binaryen and terser, see `Dockerfile`) if it doesn't exist yet, then generates
+in the output directory (`build/wasm` by default):
 
 - `hellbox.js` and `hellbox_bg.wasm`, the module without the data files,
 - the data files (`data/*.hbgd` and `data/unicode.bin`), to provide at
   runtime with `set_data`,
 - `hellbox_nowasm_fallback.js`, the JS version of the module, translated by
-  binaryen's `wasm2js`, to load with `initJs` (see above). The build disables
-  reference types and multivalue, lowers instructions for the JS translation,
-  and adapts the glue's memory views for JS memory growth.
-  `node tools/check_js_fallback.mjs <dir>` compares selected fonts and
-  missing-glyph indices from the two versions.
+  binaryen's `wasm2js` and minified by terser, to load with `initJs` (see
+  above). The build disables reference types and multivalue, lowers
+  instructions for the JS translation, and adapts the glue's memory views for
+  JS memory growth. `node tools/check_js_fallback.mjs <dir>` compares selected
+  fonts and missing-glyph indices from the two versions.
 
 `--no-js-fallback` skips the JS version, and `--embedded-data` embeds the data
 files in the module instead (without the JS version, which needs them
@@ -164,9 +164,9 @@ outside). After a change of the `Dockerfile` (e.g. to update the toolchain),
 both.
 
 With a local toolchain: `EMBEDDED_DATA=0 JS_FALLBACK=1 OUTPUT=<dir>
-./compile.sh` (binaryen's tools from `$BINARYEN`, or `PATH`); without these
-variables, `compile.sh` embeds the data files and doesn't write the JS
-version.
+./compile.sh` (binaryen's tools from `$BINARYEN`, or `PATH`, and terser from
+`$TERSER`, or `PATH`); without these variables, `compile.sh` embeds the data
+files and doesn't write the JS version.
 
 ## Encoder
 

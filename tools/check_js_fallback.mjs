@@ -21,10 +21,12 @@ wasm.initSync({ module: readFileSync(join(dir, "hellbox_bg.wasm")) });
 const js = await import(`${url("hellbox.js")}?js`);
 js.initJs((await import(url("hellbox_nowasm_fallback.js"))).default);
 
-const provide = (glue, files) => {
-  for (const file of files) {
-    if (!glue.has_data(file)) {
-      glue.set_data(file, readFileSync(join(dir, file)));
+const provide = files => {
+  for (const glue of [wasm, js]) {
+    for (const file of files) {
+      if (!glue.has_data(file)) {
+        glue.set_data(file, readFileSync(join(dir, file)));
+      }
     }
   }
 };
@@ -39,8 +41,7 @@ const check = (label, run) => {
 
 // All primary-source codepoints of selected standard fonts, with custom widths.
 for (const name of ["Helvetica", "Times-BoldItalic", "Courier", "Symbol", "ZapfDingbats"]) {
-  provide(wasm, wasm.standard_font_data_files(name));
-  provide(js, js.standard_font_data_files(name));
+  provide(wasm.standard_font_data_files(name));
   const codepoints = wasm.standard_font_codepoints(name);
   const widths = Float64Array.from(codepoints, (_, i) => 300 + (i % 9) * 60);
   check(name, glue =>
@@ -50,8 +51,7 @@ for (const name of ["Helvetica", "Times-BoldItalic", "Courier", "Symbol", "ZapfD
 // A synthesized style, with fallbacks and a missing glyph.
 const text = Uint32Array.from("Hello, ffi é ∑ ★ 一", c => c.codePointAt(0));
 const style = [1, false, false, 900, NaN, -12];
-provide(wasm, wasm.font_data_files(...style));
-provide(js, js.font_data_files(...style));
+provide(wasm.font_data_files(...style));
 check("serif, weight 900, slanted", glue =>
   glue.generate_font(text, ones(text.length), new Float64Array(0), none, ...style, NaN)
 );

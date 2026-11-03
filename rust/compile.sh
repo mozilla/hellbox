@@ -7,9 +7,10 @@
 # $OUTPUT/$OUTPUT_NAME.js and $OUTPUT/${OUTPUT_NAME}_bg.wasm; defaults below.
 # EMBEDDED_DATA=0 copies data files to $OUTPUT for runtime loading.
 #
-# JS_FALLBACK=1 also writes ${OUTPUT_NAME}_nowasm_fallback.js using wasm2js.
-# It uses the same glue (via initJs) and data files. Binaryen tools come from
-# $BINARYEN, or PATH when unset.
+# JS_FALLBACK=1 also writes ${OUTPUT_NAME}_nowasm_fallback.js using wasm2js,
+# minified by terser. It uses the same glue (via initJs) and data files.
+# Binaryen tools come from $BINARYEN, or PATH when unset, and terser from
+# $TERSER, or PATH.
 set -e
 
 OUTPUT=${OUTPUT:=.}
@@ -84,13 +85,16 @@ EOF
   "${WASM2JS}" "${TMP}/lowered.wasm" -Oz -o "${TMP}/fallback.js"
   # Export an instantiator that accepts the glue's imports.
   {
-    echo "/* THIS FILE IS GENERATED - DO NOT EDIT */"
     sed -e "/^import \* as .* from '\.\/${OUTPUT_NAME}_bg\.js';\$/d" \
         -e '/^var retasmFunc = asmFunc(/,$d' "${TMP}/fallback.js"
     echo "export default function instantiate(imports) {"
     echo "  return asmFunc(imports);"
     echo "}"
-  } > "${OUTPUT}/${OUTPUT_NAME}_nowasm_fallback.js"
+  } > "${TMP}/module.js"
+  FALLBACK="${OUTPUT}/${OUTPUT_NAME}_nowasm_fallback.js"
+  "${TERSER:-terser}" "${TMP}/module.js" --module --compress --mangle \
+           -o "${FALLBACK}"
+  sed -i "1 i\/* THIS FILE IS GENERATED - DO NOT EDIT */" "${FALLBACK}"
   rm -rf "${TMP}"
 fi
 

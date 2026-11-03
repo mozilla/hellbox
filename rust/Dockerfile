@@ -20,5 +20,12 @@ RUN echo "deb http://deb.debian.org/debian unstable main" \
     for tool in /usr/bin/wasm*; do mv "$tool" /opt/binaryen/; done
 ENV BINARYEN=/opt/binaryen
 
+# Terser minifies the JS fallback.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends nodejs npm && \
+    rm -rf /var/lib/apt/lists/* && \
+    npm install -g terser@5.51.2 && \
+    npm cache clean --force
+
 WORKDIR /code
 CMD ["/bin/sh", "-c", "/code/compile.sh"]
