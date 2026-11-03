@@ -64,10 +64,9 @@ standard_font_codepoints("Helvetica"); // Uint32Array
 The glyphs which aren't in a family are taken from the symbols (which are only
 decoded then), and synthesized to the style of the font.
 
-The module can be built without the data files (`--no-embedded-data`, see
-below): the ones a font needs must then be provided first, they're kept by the
-module (the functions throw an error, "Missing data files: ...", without
-them):
+By default, `build.js` builds the module without the data files (see below):
+the ones a font needs must then be provided first, they're kept by the module
+(the functions throw an error, "Missing data files: ...", without them):
 
 ```js
 // Load the style, fallbacks and Unicode tables.
@@ -81,8 +80,8 @@ font_data_files(family, bold, italic, weight, stemV, italicAngle);
 ```
 
 Without WebAssembly (e.g. disabled in the browser), the JS version of the
-module (built with `--js-fallback`, see below) uses the same glue and the same
-data files:
+module (also built by default, see below) uses the same glue and the same data
+files:
 
 ```js
 import { initJs } from "./hellbox.js";
@@ -145,21 +144,29 @@ node build.js --compile --output my_output_dir
 ```
 
 It builds a Docker image with the toolchain (Rust, the wasm target, wasm-pack
-and binaryen, see `Dockerfile`) if it doesn't exist yet, then generates
-`hellbox.js` and `hellbox_bg.wasm` in the output directory
-(`build/wasm` by default). After a change of the `Dockerfile` (e.g. to update
-the toolchain), `--create` builds the image again: `node build.js -Cco
-my_output_dir` does both. With a local toolchain: `OUTPUT=<dir> ./compile.sh`.
+and binaryen, see `Dockerfile`) if it doesn't exist yet, then generates in the
+output directory (`build/wasm` by default):
 
-With `--no-embedded-data` (`EMBEDDED_DATA=0 ./compile.sh`), data files are
-written beside the module for runtime loading with `set_data`.
+- `hellbox.js` and `hellbox_bg.wasm`, the module without the data files,
+- the data files (`data/*.hbgd` and `data/unicode.bin`), to provide at
+  runtime with `set_data`,
+- `hellbox_nowasm_fallback.js`, the JS version of the module, translated by
+  binaryen's `wasm2js`, to load with `initJs` (see above). The build disables
+  reference types and multivalue, lowers instructions for the JS translation,
+  and adapts the glue's memory views for JS memory growth.
+  `node tools/check_js_fallback.mjs <dir>` compares selected fonts and
+  missing-glyph indices from the two versions.
 
-With `--js-fallback` too (`JS_FALLBACK=1`), the build also writes
-`hellbox_nowasm_fallback.js`, translated by binaryen's `wasm2js`. Load it
-with `initJs` (see above). The build disables reference types and multivalue,
-lowers instructions for the JS translation, and adapts the glue's memory
-views for JS memory growth. `node tools/check_js_fallback.mjs <dir>` compares
-selected fonts and missing-glyph indices from the two versions.
+`--no-js-fallback` skips the JS version, and `--embedded-data` embeds the data
+files in the module instead (without the JS version, which needs them
+outside). After a change of the `Dockerfile` (e.g. to update the toolchain),
+`--create` builds the image again: `node build.js -Cco my_output_dir` does
+both.
+
+With a local toolchain: `EMBEDDED_DATA=0 JS_FALLBACK=1 OUTPUT=<dir>
+./compile.sh` (binaryen's tools from `$BINARYEN`, or `PATH`); without these
+variables, `compile.sh` embeds the data files and doesn't write the JS
+version.
 
 ## Encoder
 

@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 // Compares fonts and missing-glyph indices from wasm and JS. Build with:
-// node build.js -co <dir> --no-embedded-data --js-fallback
+// node build.js -co <dir>
 //
 // Usage: node tools/check_js_fallback.mjs <dir>
 

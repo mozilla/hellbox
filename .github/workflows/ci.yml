@@ -114,7 +114,7 @@ jobs:
           EMBEDDED_DATA: 0
           OUTPUT: ${{ github.workspace }}/build/wasm-without-data
       # Build the JS fallback with Docker and compare its output with wasm.
-      - run: node build.js -C && node build.js -co build/wasm-js --no-embedded-data --js-fallback
+      - run: node build.js -C && node build.js -co build/wasm-js
         working-directory: .
       - run: node tools/check_js_fallback.mjs build/wasm-js
         working-directory: .

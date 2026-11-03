@@ -87,19 +87,21 @@ const USAGE = `Usage: node build.js [options]
 
   -C, --create         Create the Docker image (again, e.g. after a change of
                        rust/Dockerfile)
-  -c, --compile        Build the wasm module (hellbox.js and
-                       hellbox_bg.wasm), creating the image if needed
+  -c, --compile        Build the wasm module (hellbox.js and hellbox_bg.wasm)
+                       and its JS version (hellbox_nowasm_fallback.js, for
+                       when WebAssembly isn't available), creating the image
+                       if needed; the data files are written beside them, to
+                       provide at runtime (see \`set_data\` in rust/README.md)
   -o, --output <dir>   Output directory (default: build/wasm)
-  --no-embedded-data   Don't embed the data files in the module: they're
-                       written in the output directory, to provide at
-                       runtime (see \`set_data\` in rust/README.md)
-  --js-fallback        With --no-embedded-data, also write a JS version of
-                       the module (hellbox_nowasm_fallback.js), for when
-                       WebAssembly isn't available
+  --embedded-data      Embed the data files in the module instead (without
+                       the JS version, which needs them outside)
+  --no-js-fallback     Don't write the JS version
   -h, --help           Show this help`;
 
 async function main() {
   const { values: args } = parseArgs({
+    // --no-embedded-data and --js-fallback (the defaults) are accepted too.
+    allowNegative: true,
     options: {
       create: { type: "boolean", short: "C" },
       compile: { type: "boolean", short: "c" },
@@ -108,7 +110,7 @@ async function main() {
         short: "o",
         default: join(__dirname, "build", "wasm"),
       },
-      "no-embedded-data": { type: "boolean" },
+      "embedded-data": { type: "boolean" },
       "js-fallback": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
@@ -117,14 +119,16 @@ async function main() {
     console.log(USAGE);
     return;
   }
+  const embeddedData = args["embedded-data"] ?? false;
+  const jsFallback = args["js-fallback"] ?? !embeddedData;
+  if (embeddedData && jsFallback) {
+    throw new Error("--js-fallback can't be used with --embedded-data.");
+  }
   if (args.create) {
     await create();
   }
-  if (args["js-fallback"] && !args["no-embedded-data"]) {
-    throw new Error("--js-fallback needs --no-embedded-data.");
-  }
   if (args.compile) {
-    await compile(args.output, !args["no-embedded-data"], args["js-fallback"]);
+    await compile(args.output, embeddedData, jsFallback);
   }
 }
 
