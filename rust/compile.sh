@@ -23,6 +23,11 @@ if [ "${EMBEDDED_DATA}" = 0 ]; then
   set -- -- --no-default-features
 fi
 
+# The stack is at the start of the memory of the module, which never shrinks:
+# 64 KB instead of 1 MB (the recursion is bounded, a few KB are used).
+RUSTFLAGS="${RUSTFLAGS} -C link-arg=-zstack-size=65536"
+export RUSTFLAGS
+
 if [ "${JS_FALLBACK}" = 1 ]; then
   if [ "${EMBEDDED_DATA}" != 0 ]; then
     echo "The JS version needs the data files outside the module (EMBEDDED_DATA=0)." >&2
@@ -32,7 +37,6 @@ if [ "${JS_FALLBACK}" = 1 ]; then
   RUSTFLAGS="${RUSTFLAGS} -C target-feature=-reference-types,-multivalue \
     -C link-arg=--no-check-features \
     -C link-arg=--features=mutable-globals,sign-ext,nontrapping-fptoint,bulk-memory"
-  export RUSTFLAGS
 fi
 
 build() {
