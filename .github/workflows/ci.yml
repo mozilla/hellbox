@@ -102,7 +102,7 @@ jobs:
           workspaces: rust
       # Built by cargo, as the actions of the organization are restricted (it's
       # cached with ~/.cargo/bin by rust-cache).
-      - run: cargo install wasm-pack --locked
+      - run: cargo install wasm-pack --version 0.15.1 --locked
       # What build.js runs in its container, the warnings being errors.
       - run: ./compile.sh
         env:

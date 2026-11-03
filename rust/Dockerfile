@@ -6,8 +6,9 @@
 # /code at run time.
 FROM rust:latest
 
+# Keep wasm-pack in sync with CI.
 RUN rustup target add wasm32-unknown-unknown && \
-    cargo install wasm-pack
+    cargo install wasm-pack --version 0.15.1 --locked
 
 # Binaryen for the JS fallback. Keep it outside PATH so wasm-pack can use
 # its own wasm-opt.
