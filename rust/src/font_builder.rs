@@ -7,9 +7,10 @@
 //! Each glyph is horizontally scaled to fit the expected advance width, its
 //! stems getting the scale of the font (see `font_scale`), and possibly
 //! emboldened (or thinned) and slanted, to synthesize a style (see
-//! `style.rs`). There is no hinting. Lengths use `sqrt`; the slant is rounded
-//! to 16.16: `hypot` and `tan` differ between platforms, and the fonts must be
-//! the same everywhere. Snapshots check the resulting font bytes.
+//! `style.rs`). There is no hinting. Lengths use `sqrt` and the slant comes
+//! from a continued fraction (see `slant_of`), rounded to 16.16: `hypot` and
+//! `tan` differ between platforms, and the fonts must be the same everywhere.
+//! Snapshots check the resulting font bytes.
 
 use crate::glyph_data::{sort_by_code, GlyphData, Outline};
 use crate::outline;
@@ -349,9 +350,18 @@ fn x_bounds(outline: &Outline) -> Option<(f64, f64)> {
     Some((min, max))
 }
 
-/// The shear of an italic angle, rounded to 16.16.
+/// The shear of an italic angle (at most `MAX_ITALIC_ANGLE`), rounded to
+/// 16.16. Its tangent is Lambert's continued fraction, x / (1 - x² / (3 - x² /
+/// (5 - ...))), whose 8 levels are as precise as `tan` up to 45 degrees,
+/// without the argument reduction of libm (7 KB of the wasm module).
 pub(crate) fn slant_of(italic_angle: f64) -> f64 {
-    (((-italic_angle * std::f64::consts::PI) / 180.0).tan() * 65536.0).round() / 65536.0
+    let x = (-italic_angle * std::f64::consts::PI) / 180.0;
+    let x2 = x * x;
+    let mut d = 17.0;
+    for k in (1..=8u32).rev() {
+        d = (2 * k - 1) as f64 - x2 / d;
+    }
+    ((x / d) * 65536.0).round() / 65536.0
 }
 
 /// Builds the font, preferring canonical resolution from the first source,
@@ -1231,4 +1241,22 @@ fn write_font(
     let adjustment = 0xb1b0_afbau32.wrapping_sub(checksum(&font));
     font[head_offset + 8..head_offset + 12].copy_from_slice(&adjustment.to_be_bytes());
     font
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computes_the_slants_like_tan() {
+        for i in -4500..=4500 {
+            let angle = i as f64 / 100.0;
+            let tan = ((-angle * std::f64::consts::PI) / 180.0).tan();
+            assert_eq!(
+                slant_of(angle),
+                (tan * 65536.0).round() / 65536.0,
+                "{angle}"
+            );
+        }
+    }
 }

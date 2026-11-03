@@ -266,9 +266,10 @@ codes and 200 random cases. Tests compare sanitized tables, comparing cmap
 mappings and ignoring head.checkSumAdjustment. Failing fonts are written in
 `target/tmp/ots/` for inspection with `ots-sanitize`.
 
-The font builder uses `sqrt` for lengths and rounds slant to 16.16, as `hypot`
-and `tan` differ between platforms: the fonts must be the same everywhere. CI
-checks font snapshots and reference drawings on Linux, macOS and Windows.
+The font builder uses `sqrt` for lengths and a continued fraction for the
+tangent of the slant, rounded to 16.16, as `hypot` and `tan` differ between
+platforms: the fonts must be the same everywhere. CI checks font snapshots and
+reference drawings on Linux, macOS and Windows.
 
 ## Benchmarks
 

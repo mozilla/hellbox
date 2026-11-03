@@ -15,7 +15,7 @@ pub(crate) const DEFAULT_WEIGHT: f64 = 400.0;
 pub(crate) const BOLD_WEIGHT: f64 = 700.0;
 // FreeType uses ~12 degrees for its synthetic oblique fonts.
 pub(crate) const DEFAULT_ITALIC_ANGLE: f64 = -12.0;
-// Keep synthetic slant away from the singularities of tan.
+// Keep synthetic slant away from the singularities of tan (see `slant_of`).
 pub(crate) const MAX_ITALIC_ANGLE: f64 = 45.0;
 /// The weights from it use the bold style, the lighter ones the regular one.
 pub(crate) const BOLD_THRESHOLD: f64 = 550.0;
