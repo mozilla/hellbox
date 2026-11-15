@@ -5,13 +5,10 @@
 //! The normalization tables of `data/unicode.bin` (see `crate::unicode`): the
 //! forms of the codepoints which can be rendered with the glyph data files.
 
+use super::range_encoder::RangeEncoder;
+use crate::unicode::{code_entries, Entries};
 use std::collections::HashSet;
 use unicode_normalization::UnicodeNormalization;
-
-/// The Latin ligatures (ff, fi, fl, ffi, ffl, long s t, st): a text with the
-/// compatibility decomposition of one of them is rendered with its glyph (e.g.
-/// "ffi" gives U+FB03).
-const LIGATURES: std::ops::RangeInclusive<u32> = 0xfb00..=0xfb06;
 
 /// The tables, and their numbers of entries.
 pub struct UnicodeTables {
@@ -32,20 +29,10 @@ fn single_codepoint(mut form: impl Iterator<Item = char>) -> Option<u32> {
     form.next().is_none().then_some(cp)
 }
 
-fn varint(bytes: &mut Vec<u8>, mut v: u32) {
-    while v >= 0x80 {
-        bytes.push((v & 0x7f) as u8 | 0x80);
-        v >>= 7;
-    }
-    bytes.push(v as u8);
-}
-
-/// The tables of the codepoints whose forms are `available`: the NFC and NFKC
-/// forms which are other single codepoints, the NFD and NFKD forms which have
-/// several (NFKD being empty when it's NFD), and the ligatures (among these
-/// decompositions). The codepoints are coded as differences with the previous
-/// ones.
-pub fn unicode_tables(available: &HashSet<u32>) -> UnicodeTables {
+/// The entries of the codepoints whose forms are `available`: the NFC and
+/// NFKC forms which are other single codepoints, the NFD and NFKD forms which
+/// have several (NFKD being empty when it's NFD).
+fn entries(available: &HashSet<u32>) -> Entries {
     let mut singletons = Vec::new();
     let mut decompositions = Vec::new();
     for c in (0..=0x10ffff).filter_map(char::from_u32) {
@@ -76,40 +63,43 @@ pub fn unicode_tables(available: &HashSet<u32>) -> UnicodeTables {
             decompositions.push((cp, nfd, nfkd));
         }
     }
-    let ligatures: Vec<u32> = LIGATURES
-        .filter(|cp| decompositions.iter().any(|(c, _, _)| c == cp))
-        .collect();
-    let mut bytes = Vec::new();
-    varint(&mut bytes, singletons.len() as u32);
-    let mut prev = 0;
-    for &(cp, nfc, nfkc) in &singletons {
-        varint(&mut bytes, cp - prev);
-        varint(&mut bytes, nfc);
-        varint(&mut bytes, nfkc);
-        prev = cp;
+    Entries {
+        singletons,
+        decompositions,
     }
-    varint(&mut bytes, decompositions.len() as u32);
-    prev = 0;
-    for (cp, nfd, nfkd) in &decompositions {
-        varint(&mut bytes, cp - prev);
-        for form in [nfd, nfkd] {
-            varint(&mut bytes, form.len() as u32);
-            for &c in form {
-                varint(&mut bytes, c);
-            }
-        }
-        prev = *cp;
-    }
-    varint(&mut bytes, ligatures.len() as u32);
-    prev = 0;
-    for &cp in &ligatures {
-        varint(&mut bytes, cp - prev);
-        prev = cp;
-    }
+}
+
+/// The coded tables of the codepoints whose forms are `available` (see
+/// `entries`), including the Latin ligatures among their decompositions.
+pub fn unicode_tables(available: &HashSet<u32>) -> UnicodeTables {
+    let entries = entries(available);
+    let mut encoder = RangeEncoder::new();
+    code_entries(&mut encoder, &entries).expect("Invalid Unicode tables");
     UnicodeTables {
-        bytes,
-        singletons: singletons.len(),
-        decompositions: decompositions.len(),
-        ligatures: ligatures.len(),
+        bytes: encoder.finish(),
+        singletons: entries.singletons.len(),
+        decompositions: entries.decompositions.len(),
+        ligatures: entries.ligatures().count(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::range_decoder::RangeDecoder;
+
+    /// Latin, Greek and their marks: runs of singletons (e.g. U+1D2C-1D6A),
+    /// NFC forms (e.g. U+0340), decompositions with both forms (e.g. U+0385).
+    #[test]
+    fn decodes_the_coded_entries() {
+        let available = (0x20..0x250).chain(0x300..0x400).collect();
+        let entries = entries(&available);
+        let mut encoder = RangeEncoder::new();
+        code_entries(&mut encoder, &entries).unwrap();
+        let bytes = encoder.finish();
+        let decoded = code_entries(&mut RangeDecoder::new(&bytes), &Entries::default()).unwrap();
+        assert_eq!(decoded, entries);
+        let truncated = &bytes[..bytes.len() - 10];
+        assert!(code_entries(&mut RangeDecoder::new(truncated), &Entries::default()).is_err());
     }
 }

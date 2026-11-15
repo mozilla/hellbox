@@ -236,3 +236,26 @@ are:
     symmetric -- "no, or no copy" --> coded["On-curve flag, then zero, sign<br/>and magnitude of dx and dy"]
     coded --> next
   ```
+
+## Unicode tables (`unicode.bin`)
+
+`unicode.bin` holds the normalization forms of the codepoints which can be
+rendered with the glyph data (see `rust/src/unicode.rs`). It has no header: it
+is coded with the binary range coder of the model codec, the model being
+defined by `code_entries` in `rust/src/unicode.rs` (shared by the encoder and
+the decoder, as above):
+
+- **Singletons** (the NFC and NFKC forms which are other single codepoints)
+  are coded as runs of consecutive codepoints whose forms are consecutive
+  too (e.g. U+1D400-1D419, MATHEMATICAL BOLD CAPITAL A-Z, give A-Z).
+- **Decompositions** (the NFD and NFKD forms with several codepoints) are
+  coded either as the marks (the codepoints after the first one) of the
+  previous form of the same kind with another first codepoint (e.g. U+0101 ā
+  after U+0100 Ā), or as a new form.
+- The codepoints of the forms are coded with move-to-front lists (the targets
+  of the singletons, the first codepoints and the marks of the
+  decompositions), and the codepoints of the entries as gaps.
+- The ligatures (U+FB00-FB06) are the ones among the decompositions.
+
+The 14 KB of the tables (as varints) are coded in 2.6 KB, against 3.9 KB with
+brotli 11.

@@ -10,16 +10,242 @@
 //! data.
 
 use crate::glyph_data::GlyphData;
+use crate::model::{check_limit, Coder, SIntModels, UIntModels};
+use crate::range_decoder::{BitModels, RangeDecoder};
 use crate::Error;
+
+/// The Latin ligatures (ff, fi, fl, ffi, ffl, long s t, st): a text with the
+/// compatibility decomposition of one of them is rendered with its glyph (e.g.
+/// "ffi" gives U+FB03).
+pub(crate) const LIGATURES: std::ops::RangeInclusive<u32> = 0xfb00..=0xfb06;
+
+const MAX_CODEPOINT: u32 = 0x10ffff;
+/// The longest decomposition of a codepoint has 18 codepoints (U+FDFA).
+const MAX_FORM_LENGTH: u32 = 32;
+
+/// The entries of the tables, coded by `code_entries`.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Entries {
+    /// Sorted by codepoint: (codepoint, NFC, NFKC), the forms being single
+    /// codepoints (0 when there's none, not both).
+    pub singletons: Vec<(u32, u32, u32)>,
+    /// Sorted by codepoint: (codepoint, NFD, NFKD), the forms having several
+    /// codepoints (empty when there's none, or when NFKD is NFD; not both).
+    pub decompositions: Vec<(u32, Vec<u32>, Vec<u32>)>,
+}
+
+impl Entries {
+    pub(crate) fn ligatures(&self) -> impl Iterator<Item = u32> + '_ {
+        self.decompositions
+            .iter()
+            .map(|&(cp, _, _)| cp)
+            .filter(|cp| LIGATURES.contains(cp))
+    }
+}
+
+// The contexts of the unsigned integers.
+const COUNT: usize = 0;
+const GAP: usize = 1;
+const RUN_LENGTH: usize = 2;
+const TARGET: usize = 3;
+const FORM_LENGTH: usize = 5;
+const FIRST: usize = 7;
+const MARK: usize = 11;
+const UINT_CONTEXTS: usize = 23;
+// The flags.
+const HAS_NFC: usize = 0;
+const NFKC_IS_NFC: usize = 1;
+const HAS_NFKC: usize = 2;
+const HAS_NFD: usize = 3;
+const HAS_NFKD: usize = 4;
+const SAME_MARKS: usize = 5;
+const FLAGS: usize = 7;
+
+/// The models of the tables. The values (the forms' codepoints) are coded
+/// with move-to-front lists: their index + 1 in the list, or 0 followed by
+/// the value when it's not there.
+struct Models {
+    uints: UIntModels,
+    first_delta: SIntModels,
+    flags: BitModels,
+}
+
+// Not inlined: the tables are decoded once, the code size matters more.
+impl Models {
+    #[inline(never)]
+    fn uint<C: Coder>(
+        &mut self,
+        c: &mut C,
+        ctx: usize,
+        value: u32,
+        max: u32,
+    ) -> Result<u32, Error> {
+        Ok(check_limit(self.uints.code(c, ctx, value as u64), max as u64)? as u32)
+    }
+
+    /// A codepoint, coded as a gap from `next`.
+    #[inline(never)]
+    fn codepoint<C: Coder>(&mut self, c: &mut C, next: u32, cp: u32) -> Result<u32, Error> {
+        let gap = self.uint(c, GAP, cp.wrapping_sub(next), MAX_CODEPOINT)?;
+        next.checked_add(gap)
+            .filter(|&cp| cp <= MAX_CODEPOINT)
+            .ok_or(Error::InvalidData)
+    }
+
+    #[inline(never)]
+    fn flag<C: Coder>(&mut self, c: &mut C, index: usize, value: bool) -> bool {
+        c.bit(&mut self.flags, index, u32::from(value)) != 0
+    }
+
+    /// A codepoint, with the contexts `ctx` (its index) and `ctx + 1` (the
+    /// new values).
+    #[inline(never)]
+    fn value<C: Coder>(
+        &mut self,
+        c: &mut C,
+        ctx: usize,
+        recent: &mut Vec<u32>,
+        value: u32,
+    ) -> Result<u32, Error> {
+        let given = if C::ENCODING {
+            recent.iter().position(|&v| v == value).map_or(0, |i| i + 1)
+        } else {
+            0
+        };
+        let index = self.uint(c, ctx, given as u32, recent.len() as u32)? as usize;
+        let value = if index == 0 {
+            self.uint(c, ctx + 1, value, MAX_CODEPOINT)?
+        } else {
+            recent.remove(index - 1)
+        };
+        recent.insert(0, value);
+        Ok(value)
+    }
+
+    /// A form of a decomposition (`kind` 0 for NFD, 1 for NFKD): either the
+    /// marks (the codepoints after the first one) of the previous form of
+    /// the same kind with another first codepoint, or a new form.
+    #[inline(never)]
+    fn form<C: Coder>(
+        &mut self,
+        c: &mut C,
+        kind: usize,
+        previous: &mut Vec<u32>,
+        recent: &mut [Vec<u32>; 2],
+        form: &[u32],
+    ) -> Result<(), Error> {
+        let same = form.len() > 1 && previous.len() > 1 && form[1..] == previous[1..];
+        if self.flag(c, SAME_MARKS + kind, same) {
+            let previous_first = previous.first_mut().ok_or(Error::InvalidData)?;
+            let delta = form
+                .first()
+                .map_or(0, |&first| first as i64 - *previous_first as i64);
+            let first = *previous_first as i64 + self.first_delta.code(c, kind, delta);
+            *previous_first = check_limit(first as u64, MAX_CODEPOINT as u64)? as u32;
+            return Ok(());
+        }
+        let given = form.len().saturating_sub(2) as u32;
+        let length = self.uint(c, FORM_LENGTH + kind, given, MAX_FORM_LENGTH)? as usize + 2;
+        let [firsts, marks] = recent;
+        let given = |i: usize| form.get(i).copied().unwrap_or(0);
+        let first = self.value(c, FIRST + 2 * kind, firsts, given(0))?;
+        previous.clear();
+        previous.push(first);
+        for i in 1..length {
+            let ctx = MARK + 2 * ((i - 1).min(2) + 3 * kind);
+            previous.push(self.value(c, ctx, marks, given(i))?);
+        }
+        Ok(())
+    }
+}
+
+/// Advances a singleton's codepoint and its non-zero forms.
+fn advance_singleton((cp, nfc, nfkc): (u32, u32, u32), n: u32) -> (u32, u32, u32) {
+    let advance = |form| if form == 0 { 0 } else { form + n };
+    (cp + n, advance(nfc), advance(nfkc))
+}
+
+/// The singletons whose codepoints and (non-zero) forms are consecutive, as
+/// (first entry, length).
+fn runs(singletons: &[(u32, u32, u32)]) -> Vec<((u32, u32, u32), u32)> {
+    let mut runs: Vec<((u32, u32, u32), u32)> = Vec::new();
+    for &entry in singletons {
+        match runs.last_mut() {
+            Some((first, n)) if advance_singleton(*first, *n) == entry => *n += 1,
+            _ => runs.push((entry, 1)),
+        }
+    }
+    runs
+}
+
+/// Codes the entries of the tables (see FORMAT.md): codes the given ones and
+/// returns them when encoding, returns the decoded ones when decoding (the
+/// given ones being empty). The codepoints are coded as gaps from the next
+/// codepoint after the previous entry.
+pub(crate) fn code_entries<C: Coder>(c: &mut C, given: &Entries) -> Result<Entries, Error> {
+    let mut models = Models {
+        uints: UIntModels::new(UINT_CONTEXTS),
+        first_delta: SIntModels::new(2),
+        flags: BitModels::new(FLAGS),
+    };
+    let mut entries = Entries::default();
+
+    let given_runs = runs(&given.singletons);
+    let count = models.uint(c, COUNT, given_runs.len() as u32, MAX_CODEPOINT)?;
+    let mut next = 0;
+    let mut targets = Vec::new();
+    for i in 0..count as usize {
+        let ((cp, nfc, nfkc), n) = given_runs.get(i).copied().unwrap_or_default();
+        let cp = models.codepoint(c, next, cp)?;
+        let n = models.uint(c, RUN_LENGTH, n.wrapping_sub(1), MAX_CODEPOINT - cp)? + 1;
+        next = cp + n;
+        let (nfc, nfkc) = if models.flag(c, HAS_NFC, nfc != 0) {
+            let nfc = models.value(c, TARGET, &mut targets, nfc)?;
+            if models.flag(c, NFKC_IS_NFC, nfkc == nfc) {
+                (nfc, nfc)
+            } else if models.flag(c, HAS_NFKC, nfkc != 0) {
+                (nfc, models.value(c, TARGET, &mut targets, nfkc)?)
+            } else {
+                (nfc, 0)
+            }
+        } else {
+            (0, models.value(c, TARGET, &mut targets, nfkc)?)
+        };
+        entries
+            .singletons
+            .extend((0..n).map(|k| advance_singleton((cp, nfc, nfkc), k)));
+    }
+
+    let count = models.uint(c, COUNT, given.decompositions.len() as u32, MAX_CODEPOINT)?;
+    let mut next = 0;
+    let mut previous = [Vec::new(), Vec::new()];
+    let mut recent = [Vec::new(), Vec::new()];
+    let empty = (0, Vec::new(), Vec::new());
+    for i in 0..count as usize {
+        let (cp, nfd, nfkd) = given.decompositions.get(i).unwrap_or(&empty);
+        let cp = models.codepoint(c, next, *cp)?;
+        next = cp + 1;
+        let has_nfd = models.flag(c, HAS_NFD, !nfd.is_empty());
+        let has_nfkd = !has_nfd || models.flag(c, HAS_NFKD, !nfkd.is_empty());
+        let mut forms = [Vec::new(), Vec::new()];
+        for (kind, form) in [nfd, nfkd].into_iter().enumerate() {
+            if [has_nfd, has_nfkd][kind] {
+                models.form(c, kind, &mut previous[kind], &mut recent, form)?;
+                forms[kind] = previous[kind].clone();
+            }
+        }
+        let [nfd, nfkd] = forms;
+        entries.decompositions.push((cp, nfd, nfkd));
+    }
+    if c.failed() {
+        return Err(Error::InvalidData);
+    }
+    Ok(entries)
+}
 
 /// Normalization forms of single codepoints.
 pub struct UnicodeTables {
-    /// Sorted by codepoint: (codepoint, NFC, NFKC), the forms being single
-    /// codepoints (0 when there's none).
-    singletons: Vec<(u32, u32, u32)>,
-    /// Sorted by codepoint: (codepoint, NFD, NFKD), the forms having several
-    /// codepoints (empty when there's none, or when NFKD is NFD).
-    decompositions: Vec<(u32, Vec<u32>, Vec<u32>)>,
+    entries: Entries,
     /// First NFD codepoints, or u32::MAX for empty NFDs.
     nfd_starts: Vec<u32>,
     /// The ligatures (sorted, with a decomposition): a text with the
@@ -27,75 +253,36 @@ pub struct UnicodeTables {
     ligatures: Vec<u32>,
 }
 
-fn varint(bytes: &[u8], pos: &mut usize) -> Result<u32, Error> {
-    let mut value: u64 = 0;
-    for shift in (0..35).step_by(7) {
-        let b = *bytes.get(*pos).ok_or(Error::InvalidData)?;
-        *pos += 1;
-        value |= ((b & 0x7f) as u64) << shift;
-        if b < 0x80 {
-            return u32::try_from(value).map_err(|_| Error::InvalidData);
-        }
-    }
-    Err(Error::InvalidData)
-}
-
 impl UnicodeTables {
     pub fn new(bytes: &[u8]) -> Result<Self, Error> {
-        let mut pos = 0;
-        let read_sequence = |pos: &mut usize| -> Result<Vec<u32>, Error> {
-            let length = varint(bytes, pos)?;
-            (0..length).map(|_| varint(bytes, pos)).collect()
-        };
-        let count = varint(bytes, &mut pos)?;
-        let mut singletons = Vec::with_capacity(count as usize);
-        let mut cp = 0;
-        for _ in 0..count {
-            cp += varint(bytes, &mut pos)?;
-            let nfc = varint(bytes, &mut pos)?;
-            let nfkc = varint(bytes, &mut pos)?;
-            singletons.push((cp, nfc, nfkc));
-        }
-        let count = varint(bytes, &mut pos)?;
-        let mut decompositions = Vec::with_capacity(count as usize);
-        let mut cp = 0;
-        for _ in 0..count {
-            cp += varint(bytes, &mut pos)?;
-            let nfd = read_sequence(&mut pos)?;
-            let nfkd = read_sequence(&mut pos)?;
-            decompositions.push((cp, nfd, nfkd));
-        }
-        let count = varint(bytes, &mut pos)?;
-        let mut ligatures = Vec::with_capacity(count as usize);
-        let mut cp = 0;
-        for _ in 0..count {
-            cp += varint(bytes, &mut pos)?;
-            ligatures.push(cp);
-        }
-        let nfd_starts = decompositions
+        let entries = code_entries(&mut RangeDecoder::new(bytes), &Entries::default())?;
+        let ligatures = entries.ligatures().collect();
+        let nfd_starts = entries
+            .decompositions
             .iter()
             .map(|(_, nfd, _)| nfd.first().copied().unwrap_or(u32::MAX))
             .collect();
         Ok(UnicodeTables {
-            singletons,
-            decompositions,
+            entries,
             nfd_starts,
             ligatures,
         })
     }
 
     fn singleton(&self, cp: u32) -> Option<(u32, u32)> {
-        self.singletons
+        let singletons = &self.entries.singletons;
+        singletons
             .binary_search_by_key(&cp, |&(c, _, _)| c)
             .ok()
-            .map(|i| (self.singletons[i].1, self.singletons[i].2))
+            .map(|i| (singletons[i].1, singletons[i].2))
     }
 
     fn decomposition(&self, cp: u32) -> Option<(&[u32], &[u32])> {
-        self.decompositions
+        let decompositions = &self.entries.decompositions;
+        decompositions
             .binary_search_by_key(&cp, |(c, _, _)| *c)
             .ok()
-            .map(|i| (&self.decompositions[i].1[..], &self.decompositions[i].2[..]))
+            .map(|i| (&decompositions[i].1[..], &decompositions[i].2[..]))
     }
 }
 
@@ -149,7 +336,7 @@ impl<'a> Resolver<'a> {
             tables
                 .nfd_starts
                 .iter()
-                .zip(&tables.decompositions)
+                .zip(&tables.entries.decompositions)
                 .find(|&(&start, (cp, nfd, _))| {
                     start == first && nfd[..] == *text && self.find(*cp).is_some()
                 })

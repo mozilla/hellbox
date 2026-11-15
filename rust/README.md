@@ -206,7 +206,7 @@ bigger ones (e.g. CJK) by a few bytes. The model rounds ties towards
   all the Noto fonts used),
 - `data/unicode.bin`: the normalization forms of the codepoints which can be
   rendered, and the Latin ligatures (U+FB00-FB06, e.g. "ffi" gives U+FB03)
-  (14 KB), generated with
+  (2.6 KB, see [FORMAT.md](../FORMAT.md#unicode-tables-unicodebin)), generated with
   [unicode-normalization](https://crates.io/crates/unicode-normalization),
   whose version is pinned (another Unicode version changes the tables): its
   license, the one of the Unicode data, is `data/LICENSE_UNICODE`.

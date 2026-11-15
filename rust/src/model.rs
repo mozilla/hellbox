@@ -218,7 +218,7 @@ pub(crate) struct NoHooks;
 
 impl Hooks for NoHooks {}
 
-fn check_limit(value: u64, max: u64) -> Result<u64, Error> {
+pub(crate) fn check_limit(value: u64, max: u64) -> Result<u64, Error> {
     if value > max {
         Err(Error::InvalidData)
     } else {
@@ -227,7 +227,7 @@ fn check_limit(value: u64, max: u64) -> Result<u64, Error> {
 }
 
 /// Unsigned integers: adaptive length and mantissa coding of value + 1.
-struct UIntModels {
+pub(crate) struct UIntModels {
     unary: BitModels,
     mantissa: BitModels,
     /// The length is coded with a binary tree (see `TREE_LENGTHS`) rather
@@ -244,7 +244,7 @@ struct UIntModels {
 const TREE_LENGTHS: usize = 16;
 
 impl UIntModels {
-    fn new(num_contexts: usize) -> Self {
+    pub(crate) fn new(num_contexts: usize) -> Self {
         UIntModels {
             unary: BitModels::new(num_contexts * MAX_BITS),
             mantissa: BitModels::new(num_contexts * (MAX_LENGTH_CONTEXT + 1) * MANTISSA_CONTEXTS),
@@ -275,7 +275,7 @@ impl UIntModels {
         }
     }
 
-    fn code<C: Coder>(&mut self, c: &mut C, ctx: usize, value: u64) -> u64 {
+    pub(crate) fn code<C: Coder>(&mut self, c: &mut C, ctx: usize, value: u64) -> u64 {
         let v = if C::ENCODING { value + 1 } else { 0 };
         let n = if C::ENCODING {
             64 - v.leading_zeros() as usize
@@ -328,14 +328,14 @@ impl UIntModels {
 }
 
 /// Signed integers: zero flag, sign and magnitude.
-struct SIntModels {
+pub(crate) struct SIntModels {
     zero: BitModels,
     sign: BitModels,
     magnitude: UIntModels,
 }
 
 impl SIntModels {
-    fn new(num_contexts: usize) -> Self {
+    pub(crate) fn new(num_contexts: usize) -> Self {
         SIntModels {
             zero: BitModels::new(num_contexts),
             sign: BitModels::new(num_contexts),
@@ -351,7 +351,7 @@ impl SIntModels {
         }
     }
 
-    fn code<C: Coder>(&mut self, c: &mut C, ctx: usize, value: i64) -> i64 {
+    pub(crate) fn code<C: Coder>(&mut self, c: &mut C, ctx: usize, value: i64) -> i64 {
         if c.bit(&mut self.zero, ctx, u32::from(value == 0)) != 0 {
             return 0;
         }
