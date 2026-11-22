@@ -116,6 +116,22 @@ jobs:
         working-directory: .
       - run: node tools/check_js_fallback.mjs build/wasm-js
         working-directory: .
+      - name: Check the build metadata
+        working-directory: .
+        run: |
+          node --test tools/build_metadata.test.js
+          node - "$(git rev-parse HEAD)" <<'EOF'
+          const { readBuildMetadata } = require("./tools/build_metadata.js");
+          const [, , revision] = process.argv;
+          const builds = { wasm: true, "wasm-without-data": false, "wasm-js": false };
+          for (const [dir, embeddedData] of Object.entries(builds)) {
+            const info = readBuildMetadata(`build/${dir}/hellbox_bg.wasm`);
+            console.log(`build/${dir}: ${JSON.stringify(info)}`);
+            if (info?.repo !== revision || info.embeddedData !== embeddedData) {
+              throw new Error(`Unexpected build metadata in build/${dir}`);
+            }
+          }
+          EOF
       - name: Report the sizes
         run: |
           {

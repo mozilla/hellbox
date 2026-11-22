@@ -12,6 +12,7 @@ const { spawn } = require("node:child_process");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { parseArgs } = require("node:util");
+const { getRepoRevision } = require("./tools/build_metadata.js");
 
 const IMAGE = "hellbox-builder";
 const CRATE = join(__dirname, "rust");
@@ -50,6 +51,7 @@ async function compile(output, embeddedData, jsFallback) {
   output = resolve(output);
   await fs.mkdir(output, { recursive: true });
   const imageId = await buildImageId();
+  // Read the revision on the host so Git can resolve linked worktrees.
   await docker(
     "run",
     "--rm",
@@ -64,11 +66,13 @@ async function compile(output, embeddedData, jsFallback) {
     "-e",
     "OUTPUT=/out",
     "-e",
+    `REPO_REVISION=${getRepoRevision(__dirname)}`,
+    "-e",
     `EMBEDDED_DATA=${embeddedData ? 1 : 0}`,
     "-e",
     `JS_FALLBACK=${jsFallback ? 1 : 0}`,
     "-v",
-    `${CRATE}:/code`,
+    `${__dirname}:/code`,
     "-v",
     `${output}:/out`,
     imageId,

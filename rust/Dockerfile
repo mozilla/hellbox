@@ -2,8 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-# Toolchain to build the wasm module (see ../build.js): the crate is mounted in
-# /code at run time.
+# Toolchain to build the wasm module (see ../build.js): the repository is
+# mounted in /code at run time.
 
 # Node.js and terser, which minifies the JS fallback, from package-lock.json.
 FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS node
@@ -37,10 +37,10 @@ RUN set -eu; \
     rm "/tmp/${archive}"
 ENV BINARYEN=/opt/binaryen
 
-# Node.js runs terser.
+# Node.js runs terser and adds the build metadata.
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /opt/tools /opt/tools
 ENV TERSER=/opt/tools/node_modules/.bin/terser
 
-WORKDIR /code
-CMD ["/bin/sh", "-c", "/code/compile.sh"]
+WORKDIR /code/rust
+CMD ["/bin/sh", "-c", "/code/rust/compile.sh"]

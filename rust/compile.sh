@@ -11,12 +11,22 @@
 # sharing glue (via initJs) and runtime data with wasm.
 # BINARYEN selects the tools directory; TERSER selects the minifier.
 # Both default to PATH lookups.
+#
+# A build_info section describing the build is added to the wasm module, with
+# ../tools/build_metadata.js (Node.js is needed). REPO_REVISION gives the
+# revision of the repository, if git can't get it from the checkout.
 set -e
 
 OUTPUT=${OUTPUT:-.}
 OUTPUT_NAME=${OUTPUT_NAME:-hellbox}
 EMBEDDED_DATA=${EMBEDDED_DATA:-1}
 JS_FALLBACK=${JS_FALLBACK:-0}
+TERSER=${TERSER:-terser}
+METADATA_TOOL="$(dirname "$0")/../tools/build_metadata.js"
+
+# wasm-pack's output .gitignore can hide untracked files when OUTPUT=.
+REPO_REVISION=${REPO_REVISION:-$(node "${METADATA_TOOL}" --revision .)}
+export REPO_REVISION
 
 # Cargo's options: the dependencies are the ones of Cargo.lock.
 set -- -- --locked
@@ -101,10 +111,19 @@ EOF
     echo "}"
   } > "${TMP}/module.js"
   FALLBACK="${OUTPUT}/${OUTPUT_NAME}_nowasm_fallback.js"
-  "${TERSER:-terser}" "${TMP}/module.js" --module --compress --mangle \
+  "${TERSER}" "${TMP}/module.js" --module --compress --mangle \
            -o "${FALLBACK}"
   sed -i "1 i\/* THIS FILE IS GENERATED - DO NOT EDIT */" "${FALLBACK}"
 fi
+
+set -- "rustc=$(rustc -vV | sed -n 's/^release: //p')" \
+       "wasmPack=$(wasm-pack --version | sed 's/^wasm-pack //')"
+if [ "${JS_FALLBACK}" = 1 ]; then
+  set -- "$@" \
+      "binaryen=$("${WASM_OPT}" --version | sed -n 's/^wasm-opt version \([^ ]*\).*/\1/p')" \
+      "terser=$("${TERSER}" --version | sed 's/^terser //')"
+fi
+node "${METADATA_TOOL}" "${OUTPUT}/${OUTPUT_NAME}_bg.wasm" Cargo.lock "${EMBEDDED_DATA}" "$@"
 
 sed -i "1 i\/* THIS FILE IS GENERATED - DO NOT EDIT */" "${OUTPUT}/${OUTPUT_NAME}.js"
 # Remove wasm-pack's generated ignore file so output can be tracked.

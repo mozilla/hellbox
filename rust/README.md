@@ -158,7 +158,28 @@ outside). `--create` only builds the image.
 With a local toolchain: `EMBEDDED_DATA=0 JS_FALLBACK=1 OUTPUT=<dir>
 ./compile.sh` (binaryen's tools from `$BINARYEN`, or `PATH`, and terser from
 `$TERSER`, or `PATH`); without these variables, `compile.sh` embeds the data
-files and doesn't write the JS version.
+files and doesn't write the JS version. Node.js is needed for the build
+metadata.
+
+### Build metadata
+
+`hellbox_bg.wasm` contains a `build_info` custom section with a JSON object
+describing the build: the revision of the repository (`repo`, suffixed with
+`-dirty` if there were local changes, untracked files included), whether the
+data files are embedded (`embeddedData`), the Rust version (`rustc`), the
+wasm-bindgen version (`wasmBindgen`, from `Cargo.lock`) and the wasm-pack
+version (`wasmPack`), and, when the JS version is built, the binaryen
+(`binaryen`) and terser (`terser`) versions. It's added by
+`../tools/build_metadata.js`, and can be read with:
+
+```js
+const module = await WebAssembly.compile(bytes);
+const [section] = WebAssembly.Module.customSections(module, "build_info");
+const buildInfo = JSON.parse(new TextDecoder().decode(section));
+```
+
+The tests for the metadata can be run with
+`node --test tools/build_metadata.test.js` (from the root of the repository).
 
 ## Encoder
 
