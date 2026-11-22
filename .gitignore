@@ -2,6 +2,7 @@
 /sources/
 /build/
 /rust/target/
+/rust/node_modules/
 # Private: the research notes and experiments, and the local settings.
 /research/
 /.claude/

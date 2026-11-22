@@ -1,0 +1,9 @@
+{
+  "name": "hellbox-build",
+  "private": true,
+  "description": "The tools of the Docker image (see Dockerfile), installed from package-lock.json.",
+  "license": "MPL-2.0",
+  "dependencies": {
+    "terser": "5.51.2"
+  }
+}

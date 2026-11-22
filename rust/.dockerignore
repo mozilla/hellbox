@@ -1,0 +1,5 @@
+# The image doesn't contain the sources (they're mounted at run time), only
+# the tools of package-lock.json.
+*
+!package.json
+!package-lock.json

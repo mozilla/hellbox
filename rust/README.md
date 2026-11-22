@@ -134,9 +134,10 @@ From the root of the repository:
 node build.js --compile --output my_output_dir
 ```
 
-It builds a Docker image with the toolchain (Rust, the wasm target, wasm-pack,
-binaryen and terser, see `Dockerfile`) if it doesn't exist yet, then generates
-in the output directory (`build/wasm` by default):
+It builds the Docker image with the toolchain (Rust, the wasm target,
+wasm-pack, binaryen, Node.js and terser, pinned in `Dockerfile` and
+`package-lock.json`), using Docker's layer cache, then generates in the output
+directory (`build/wasm` by default), with the crates of `Cargo.lock`:
 
 - `hellbox.js` and `hellbox_bg.wasm`, the module without the data files,
 - the data files (`data/*.hbgd` and `data/unicode.bin`), to provide at
@@ -152,9 +153,7 @@ in the output directory (`build/wasm` by default):
 
 `--no-js-fallback` skips the JS version, and `--embedded-data` embeds the data
 files in the module instead (without the JS version, which needs them
-outside). After a change of the `Dockerfile` (e.g. to update the toolchain),
-`--create` builds the image again: `node build.js -Cco my_output_dir` does
-both.
+outside). `--create` only builds the image.
 
 With a local toolchain: `EMBEDDED_DATA=0 JS_FALLBACK=1 OUTPUT=<dir>
 ./compile.sh` (binaryen's tools from `$BINARYEN`, or `PATH`, and terser from

@@ -18,9 +18,10 @@ OUTPUT_NAME=${OUTPUT_NAME:-hellbox}
 EMBEDDED_DATA=${EMBEDDED_DATA:-1}
 JS_FALLBACK=${JS_FALLBACK:-0}
 
-set --
+# Cargo's options: the dependencies are the ones of Cargo.lock.
+set -- -- --locked
 if [ "${EMBEDDED_DATA}" = 0 ]; then
-  set -- -- --no-default-features
+  set -- "$@" --no-default-features
 fi
 
 # The stack is at the start of the memory of the module, which never shrinks:

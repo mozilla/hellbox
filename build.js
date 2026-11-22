@@ -7,16 +7,17 @@
 
 "use strict";
 
-const fs = require("fs");
-const { spawn } = require("child_process");
-const { join, resolve } = require("path");
-const { parseArgs } = require("util");
+const fs = require("node:fs/promises");
+const { spawn } = require("node:child_process");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
+const { parseArgs } = require("node:util");
 
 const IMAGE = "hellbox-builder";
 const CRATE = join(__dirname, "rust");
 
-function exec(command, args, stdio = "inherit") {
-  const child = spawn(command, args, { stdio });
+function docker(...args) {
+  const child = spawn("docker", args, { stdio: "inherit" });
   return new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", code => {
@@ -24,33 +25,32 @@ function exec(command, args, stdio = "inherit") {
         resolve();
         return;
       }
-      reject(new Error(`${command} exited with code ${code}`));
+      reject(new Error(`docker ${args[0]} exited with code ${code}`));
     });
   });
 }
 
-function create() {
-  return exec("docker", ["build", "-t", IMAGE, CRATE]);
+function buildImage(...options) {
+  return docker("build", "-t", IMAGE, ...options, CRATE);
 }
 
-async function hasImage() {
+// Keep the image ID so another checkout can retag the image before we run it.
+async function buildImageId() {
+  const tempDir = await fs.mkdtemp(join(tmpdir(), "hellbox-build-"));
   try {
-    await exec("docker", ["image", "inspect", IMAGE], "ignore");
-    return true;
-  } catch {
-    return false;
+    const imageIdFile = join(tempDir, "image-id");
+    await buildImage("--iidfile", imageIdFile);
+    return (await fs.readFile(imageIdFile, "utf8")).trim();
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 }
 
 async function compile(output, embeddedData, jsFallback) {
   output = resolve(output);
-  await fs.promises.mkdir(output, { recursive: true });
-  if (!(await hasImage())) {
-    await create();
-  }
-  // The crate is mounted in /code and the output in /out: the build files and
-  // the Cargo downloads go under /tmp in the disposable container.
-  await exec("docker", [
+  await fs.mkdir(output, { recursive: true });
+  const imageId = await buildImageId();
+  await docker(
     "run",
     "--rm",
     "--user",
@@ -71,26 +71,26 @@ async function compile(output, embeddedData, jsFallback) {
     `${CRATE}:/code`,
     "-v",
     `${output}:/out`,
-    IMAGE,
-  ]);
+    imageId,
+  );
   const names = ["hellbox.js", "hellbox_bg.wasm"];
   if (jsFallback) {
     names.push("hellbox_nowasm_fallback.js");
   }
   for (const name of names) {
-    const { size } = await fs.promises.stat(join(output, name));
+    const { size } = await fs.stat(join(output, name));
     console.log(`${join(output, name)}: ${size} bytes`);
   }
 }
 
 const USAGE = `Usage: node build.js [options]
 
-  -C, --create         Create the Docker image (again, e.g. after a change of
-                       rust/Dockerfile)
+  -C, --create         Only build the Docker image
   -c, --compile        Build the wasm module (hellbox.js and hellbox_bg.wasm)
                        and its JS version (hellbox_nowasm_fallback.js, for
-                       when WebAssembly isn't available), creating the image
-                       if needed; the data files are written beside them, to
+                       when WebAssembly isn't available), after building the
+                       image (from Docker's cache if it's up to date); the
+                       data files are written beside them, to
                        provide at runtime (see \`set_data\` in rust/README.md)
   -o, --output <dir>   Output directory (default: build/wasm)
   --embedded-data      Embed the data files in the module instead (without
@@ -124,11 +124,10 @@ async function main() {
   if (embeddedData && jsFallback) {
     throw new Error("--js-fallback can't be used with --embedded-data.");
   }
-  if (args.create) {
-    await create();
-  }
   if (args.compile) {
     await compile(args.output, embeddedData, jsFallback);
+  } else {
+    await buildImage();
   }
 }
 
