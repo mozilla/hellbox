@@ -336,6 +336,35 @@ Dependabot (`../.github/dependabot.yml`) updates the actions of the workflows
 every week; the Cargo dependencies are updated by hand (some pins are
 deliberate, and an update can change the generated files or the wasm module).
 
+## Release
+
+Pushing a version tag (e.g. `v1.2.3`) runs the `Release` workflow
+(`../.github/workflows/release.yml`): it builds the wasm module with
+`build.js` (with the data files outside and the JS version), and opens a pull
+request in [pdf.js](https://github.com/mozilla/pdf.js) updating
+`external/hellbox/`, titled "Update Hellbox to version 1.2.3", described with
+the build metadata and the sizes of the changed files:
+
+```sh
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The pull request replaces all the files of `external/hellbox/` but its
+`README.md` with `hellbox.js`, `hellbox_bg.wasm`, `hellbox_nowasm_fallback.js`,
+the data files (except `Wingdings.hbgd`, which pdf.js doesn't use yet), the
+licenses of `data/` and `../LICENSE` (as `LICENSE_HELLBOX`).
+
+The workflow doesn't redo a release which has an open or merged pull request,
+and refuses to replace a module in pdf.js that was built from a revision which
+isn't an ancestor of the tagged one, so that retrying an old tag can't revert
+a newer release. A branch left by a failed run is checked, then replaced with
+a commit on top of the current `master` of pdf.js.
+
+It runs in the `release` environment, which must provide the `CLIENT_ID` and
+`APP_PRIVATE_KEY` secrets of a GitHub App installed on `mozilla/pdf.js` with
+read and write access to contents and pull requests.
+
 ## License
 
 The code is under the Mozilla Public License 2.0. The glyph data is derived
